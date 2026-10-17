@@ -684,6 +684,7 @@ export interface InitiatePaidEnrollmentResponse {
     merchantNumber: string;
     personalNumber: string;
     whatsappNumber: string;
+    whatsappDisplayNumber?: string;
     accountName: string;
   };
   isExistingPending: boolean;
@@ -710,10 +711,15 @@ export async function initiatePaidEnrollment(params: {
     const uid = auth.currentUser.uid;
     const enrollmentId = makeEnrollmentId(uid, params.courseId);
     const path = `enrollments/${enrollmentId}`;
+    const trimmedTrxId = params.trxId?.trim() ? params.trxId.trim().slice(0, 64) : undefined;
+    const trimmedSenderPhone = params.senderPhone?.trim()
+      ? params.senderPhone.trim().slice(0, 32)
+      : undefined;
     try {
-      const courseSnap = await getDoc(doc(db, 'courses', params.courseId));
-      if (courseSnap.exists()) {
-        await setDoc(doc(db, 'enrollments', enrollmentId), {
+      const enrollmentRef = doc(db, 'enrollments', enrollmentId);
+      const existingSnap = await getDoc(enrollmentRef);
+      if (!existingSnap.exists()) {
+        await setDoc(enrollmentRef, {
           id: enrollmentId,
           userId: uid,
           courseId: params.courseId,
@@ -721,12 +727,28 @@ export async function initiatePaidEnrollment(params: {
           status: 'PENDING',
           secretCode: data.secretCode,
           paymentMethod: 'bKash',
+          ...(trimmedTrxId ? { trxId: trimmedTrxId } : {}),
+          ...(trimmedSenderPhone ? { senderPhone: trimmedSenderPhone } : {}),
           enrolledAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else if (existingSnap.data()?.accessStatus === 'pending') {
+        await updateDoc(enrollmentRef, {
+          accessStatus: 'pending',
+          status: 'PENDING',
+          secretCode: data.secretCode,
+          paymentMethod: 'bKash',
+          ...(trimmedTrxId ? { trxId: trimmedTrxId } : {}),
+          ...(trimmedSenderPhone ? { senderPhone: trimmedSenderPhone } : {}),
           updatedAt: serverTimestamp(),
         });
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, path);
+      try {
+        handleFirestoreError(err, OperationType.WRITE, path);
+      } catch {
+        // Primary backend API enrollment creation succeeded; preserve structured error log without blocking UI
+      }
     }
   }
 

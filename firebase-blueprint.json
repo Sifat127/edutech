@@ -254,6 +254,18 @@
           "minLength": 1,
           "maxLength": 32
         },
+        "trxId": {
+          "type": "string",
+          "description": "Optional bKash Transaction ID provided by the student.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "senderPhone": {
+          "type": "string",
+          "description": "Optional sender bKash phone number provided by the student.",
+          "minLength": 1,
+          "maxLength": 32
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

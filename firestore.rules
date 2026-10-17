@@ -102,15 +102,17 @@ service cloud.firestore {
 
     function isValidEnrollment(data) {
       return data.keys().hasAll(['id', 'userId', 'courseId', 'accessStatus', 'enrolledAt', 'updatedAt']) &&
-        data.keys().hasOnly(['id', 'userId', 'courseId', 'accessStatus', 'status', 'secretCode', 'paymentMethod', 'createdAt', 'activatedAt', 'enrolledAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'courseId', 'accessStatus', 'status', 'secretCode', 'paymentMethod', 'trxId', 'senderPhone', 'createdAt', 'activatedAt', 'enrolledAt', 'updatedAt']) &&
         isValidId(data.id) &&
         isValidId(data.userId) &&
         isValidId(data.courseId) &&
         data.id == data.userId + '_' + data.courseId &&
         (data.accessStatus == 'active' || data.accessStatus == 'revoked' || data.accessStatus == 'pending' || data.accessStatus == 'rejected') &&
         (!('status' in data) || data.status == 'PENDING' || data.status == 'ACTIVE' || data.status == 'REJECTED') &&
-        (!('secretCode' in data) || (data.secretCode is string && data.secretCode.size() == 10 && data.secretCode.matches('^EDU-[A-Z0-9]{6}$'))) &&
+        (!('secretCode' in data) || (data.secretCode is string && data.secretCode.size() >= 8 && data.secretCode.size() <= 16 && data.secretCode.matches('^EDU-[A-Z0-9]{6}$'))) &&
         (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() >= 1 && data.paymentMethod.size() <= 32)) &&
+        (!('trxId' in data) || (data.trxId is string && data.trxId.size() >= 1 && data.trxId.size() <= 64)) &&
+        (!('senderPhone' in data) || (data.senderPhone is string && data.senderPhone.size() >= 1 && data.senderPhone.size() <= 32)) &&
         data.enrolledAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -193,7 +195,7 @@ service cloud.firestore {
 
     // Courses collection
     match /courses/{courseId} {
-      allow get: if isValidId(courseId) && (existing().isPublished == true || isAdmin());
+      allow get: if isValidId(courseId) && (resource == null || existing().isPublished == true || isAdmin());
       allow list: if resource.data.isPublished == true || isAdmin();
 
       allow create: if isVerifiedUser() &&
@@ -228,6 +230,7 @@ service cloud.firestore {
     // Lessons collection (Protected YouTube video IDs)
     match /lessons/{lessonId} {
       allow get: if isSignedIn() && isValidId(lessonId) && (
+        resource == null ||
         isAdmin() || (
           existing().isPublished == true &&
           exists(/databases/$(database)/documents/courses/$(existing().courseId)) &&
@@ -269,7 +272,7 @@ service cloud.firestore {
     // Enrollments collection (Document ID is {userId}_{courseId})
     match /enrollments/{enrollmentId} {
       allow get: if isSignedIn() && isValidId(enrollmentId) && (
-        existing().userId == request.auth.uid || isAdmin()
+        resource == null || existing().userId == request.auth.uid || isAdmin()
       );
 
       allow list: if isSignedIn() && (
@@ -281,15 +284,17 @@ service cloud.firestore {
         isValidEnrollment(incoming()) &&
         incoming().id == enrollmentId &&
         incoming().enrolledAt == request.time &&
-        incoming().updatedAt == request.time &&
-        exists(/databases/$(database)/documents/courses/$(incoming().courseId)) && (
+        incoming().updatedAt == request.time && (
           isAdmin() || (
-            incoming().userId == request.auth.uid &&
-            get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.isPublished == true && (
-              (incoming().accessStatus == 'active' &&
-                get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.courseType == 'free') ||
+            incoming().userId == request.auth.uid && (
               (incoming().accessStatus == 'pending' &&
-                get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.courseType == 'paid')
+                (!exists(/databases/$(database)/documents/courses/$(incoming().courseId)) ||
+                  (get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.isPublished == true &&
+                    get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.courseType == 'paid'))) ||
+              (incoming().accessStatus == 'active' &&
+                exists(/databases/$(database)/documents/courses/$(incoming().courseId)) &&
+                get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.isPublished == true &&
+                get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.courseType == 'free')
             )
           )
         );
@@ -301,9 +306,15 @@ service cloud.firestore {
         incoming().userId == existing().userId &&
         incoming().courseId == existing().courseId &&
         incoming().enrolledAt == existing().enrolledAt &&
-        incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'status', 'secretCode', 'paymentMethod', 'activatedAt', 'updatedAt']) &&
-        isAdmin();
+        incoming().updatedAt == request.time && (
+          (isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'status', 'secretCode', 'paymentMethod', 'trxId', 'senderPhone', 'activatedAt', 'updatedAt'])) ||
+          (existing().userId == request.auth.uid &&
+            existing().accessStatus == 'pending' &&
+            incoming().accessStatus == 'pending' &&
+            (!('status' in incoming()) || incoming().status == 'PENDING') &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'status', 'secretCode', 'paymentMethod', 'trxId', 'senderPhone', 'updatedAt']))
+        );
 
       allow delete: if isVerifiedUser() && isValidId(enrollmentId) && isAdmin();
     }
@@ -311,7 +322,7 @@ service cloud.firestore {
     // Lesson Progress collection (Document ID is {userId}_{lessonId})
     match /lessonProgress/{progressId} {
       allow get: if isSignedIn() && isValidId(progressId) && (
-        existing().userId == request.auth.uid || isAdmin()
+        resource == null || existing().userId == request.auth.uid || isAdmin()
       );
 
       allow list: if isSignedIn() && (

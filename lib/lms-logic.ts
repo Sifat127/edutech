@@ -61,11 +61,59 @@ export interface Enrollment {
 }
 
 export const BKASH_PAYMENT_CONFIG = {
-  merchantNumber: '01711-984210',
-  personalNumber: '01819-442901',
-  whatsappNumber: '8801711984210',
+  merchantNumber: '01922829105',
+  personalNumber: '01922829105',
+  whatsappNumber: '8801922829105',
+  whatsappDisplayNumber: '01922829105',
   accountName: 'DIU EduTech Official',
 } as const;
+
+export function buildBkashWhatsappVerificationMessage(params: {
+  courseTitle: string;
+  coursePrice: number;
+  secretCode: string;
+  studentName: string;
+  studentEmail: string;
+  bkashNumber?: string;
+  trxId?: string;
+  senderPhone?: string;
+}): string {
+  const targetBkash = params.bkashNumber || BKASH_PAYMENT_CONFIG.personalNumber;
+  return [
+    'Hello DIU EduTech Support,',
+    'I have sent the course fee via bKash using my Secret Code in the Reference field. Please activate my course:',
+    '',
+    `• Secret Code (bKash Reference): ${params.secretCode}`,
+    `• Student Name: ${params.studentName}`,
+    `• Student Email: ${params.studentEmail}`,
+    `• Course: ${params.courseTitle} ($${params.coursePrice})`,
+    `• Sent to bKash Number: ${targetBkash}`,
+    params.senderPhone?.trim() ? `• My Sender bKash Number: ${params.senderPhone.trim()}` : null,
+    params.trxId?.trim() ? `• bKash TrxID: ${params.trxId.trim()}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function buildBkashWhatsappVerificationUrl(params: {
+  courseTitle: string;
+  coursePrice: number;
+  secretCode: string;
+  studentName: string;
+  studentEmail: string;
+  whatsappNumber?: string;
+  bkashNumber?: string;
+  trxId?: string;
+  senderPhone?: string;
+}): string {
+  const digitsOnly = (params.whatsappNumber || BKASH_PAYMENT_CONFIG.whatsappNumber).replace(
+    /[^0-9]/g,
+    ''
+  );
+  const normalizedWa = digitsOnly.startsWith('01') ? `88${digitsOnly}` : digitsOnly;
+  const message = buildBkashWhatsappVerificationMessage(params);
+  return `https://wa.me/${normalizedWa}?text=${encodeURIComponent(message)}`;
+}
 
 const SECRET_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 export const SECRET_CODE_REGEX = /^EDU-[A-Z0-9]{6}$/;
