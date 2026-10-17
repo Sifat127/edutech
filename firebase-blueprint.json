@@ -207,7 +207,7 @@
     },
     "Enrollment": {
       "title": "Enrollment",
-      "description": "Student enrollment record linking a user to a course with explicit access status.",
+      "description": "Student enrollment record linking a user to a course with explicit access status and bKash Secret Code verification metadata.",
       "type": "object",
       "properties": {
         "id": {
@@ -234,7 +234,35 @@
         "accessStatus": {
           "type": "string",
           "description": "Current authorization status of the enrollment.",
-          "enum": ["active", "revoked", "pending"]
+          "enum": ["active", "revoked", "pending", "rejected"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Uppercase verification status for bKash Secret Code workflow.",
+          "enum": ["PENDING", "ACTIVE", "REJECTED"]
+        },
+        "secretCode": {
+          "type": "string",
+          "description": "Unique 10-character alphanumeric Secret Code (e.g. EDU-8F29K1).",
+          "minLength": 8,
+          "maxLength": 16,
+          "pattern": "^EDU-[A-Z0-9]{6}$"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Payment method used for enrollment (default: bKash).",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the purchase/enrollment was initiated."
+        },
+        "activatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the Secret Code was verified and course access was activated."
         },
         "enrolledAt": {
           "type": "string",

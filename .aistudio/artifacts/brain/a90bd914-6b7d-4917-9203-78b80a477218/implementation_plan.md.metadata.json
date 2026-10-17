@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for adding a video quality switcher, keyboard shortcuts (Space for play/pause, Left/Right arrows for ±10s seek), and a manual measurable volume control (0-100% slider and direct percentage input) to the custom YouTube lesson player in app/learn/[courseId]/page.tsx.",
+  "updatedAt": "2026-10-17T22:25:36.964006363Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

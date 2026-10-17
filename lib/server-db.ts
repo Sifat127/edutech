@@ -197,7 +197,7 @@ function createInitialSeedDatabase(): DatabaseSchema {
       id: 'lesson_ts_3',
       courseId: 'course_ts_fundamentals',
       title: 'End-to-End Type Safety Across API Boundaries',
-      youtubeVideoId: 'M7lc1UVf-VE',
+      youtubeVideoId: 'rfscVS0vtbw',
       lessonOrder: 3,
       isPublished: true,
       createdAt: now,
@@ -207,7 +207,7 @@ function createInitialSeedDatabase(): DatabaseSchema {
       id: 'lesson_ui_1',
       courseId: 'course_ui_systems',
       title: 'Typographic Hierarchy, Measure & Contrast Ratios',
-      youtubeVideoId: 'M7lc1UVf-VE',
+      youtubeVideoId: 'BwuLxPH8IDs',
       lessonOrder: 1,
       isPublished: true,
       createdAt: now,
@@ -237,7 +237,7 @@ function createInitialSeedDatabase(): DatabaseSchema {
       id: 'lesson_cloud_1',
       courseId: 'course_cloud_architecture',
       title: 'Stateless Compute & Container Runtime Contracts',
-      youtubeVideoId: 'M7lc1UVf-VE',
+      youtubeVideoId: 'BwuLxPH8IDs',
       lessonOrder: 1,
       isPublished: true,
       createdAt: now,
@@ -267,7 +267,7 @@ function createInitialSeedDatabase(): DatabaseSchema {
       id: 'lesson_cloud_4_draft',
       courseId: 'course_cloud_architecture',
       title: 'Multi-Region Traffic Failover Drills (Unpublished Draft)',
-      youtubeVideoId: 'M7lc1UVf-VE',
+      youtubeVideoId: 'W6NZfCO5SIk',
       lessonOrder: 4,
       isPublished: false,
       createdAt: now,
@@ -277,7 +277,7 @@ function createInitialSeedDatabase(): DatabaseSchema {
       id: 'lesson_sec_1',
       courseId: 'course_db_security',
       title: 'Attribute-Based Access Control & Schema Validation',
-      youtubeVideoId: 'M7lc1UVf-VE',
+      youtubeVideoId: 'BwuLxPH8IDs',
       lessonOrder: 1,
       isPublished: true,
       createdAt: now,
@@ -296,6 +296,7 @@ function createInitialSeedDatabase(): DatabaseSchema {
   };
 
   const alexTsEnrollmentId = makeEnrollmentId('student_alex', 'course_ts_fundamentals');
+  const alexCloudPendingId = makeEnrollmentId('student_alex', 'course_cloud_architecture');
   const mayaCloudEnrollmentId = makeEnrollmentId('student_maya', 'course_cloud_architecture');
 
   const enrollments: Record<string, Enrollment> = {
@@ -304,14 +305,37 @@ function createInitialSeedDatabase(): DatabaseSchema {
       userId: 'student_alex',
       courseId: 'course_ts_fundamentals',
       accessStatus: 'active',
+      status: 'ACTIVE',
+      secretCode: 'EDU-3T79F2',
+      paymentMethod: 'Free',
+      createdAt: '2026-10-16T10:00:00.000Z',
+      activatedAt: '2026-10-16T10:00:00.000Z',
       enrolledAt: '2026-10-16T10:00:00.000Z',
       updatedAt: '2026-10-16T10:00:00.000Z',
+    },
+    [alexCloudPendingId]: {
+      id: alexCloudPendingId,
+      userId: 'student_alex',
+      courseId: 'course_cloud_architecture',
+      accessStatus: 'pending',
+      status: 'PENDING',
+      secretCode: 'EDU-8F29K1',
+      paymentMethod: 'bKash',
+      createdAt: '2026-10-17T08:30:00.000Z',
+      activatedAt: null,
+      enrolledAt: '2026-10-17T08:30:00.000Z',
+      updatedAt: '2026-10-17T08:30:00.000Z',
     },
     [mayaCloudEnrollmentId]: {
       id: mayaCloudEnrollmentId,
       userId: 'student_maya',
       courseId: 'course_cloud_architecture',
       accessStatus: 'active',
+      status: 'ACTIVE',
+      secretCode: 'EDU-4M92C7',
+      paymentMethod: 'bKash',
+      createdAt: '2026-10-16T11:45:00.000Z',
+      activatedAt: '2026-10-16T12:00:00.000Z',
       enrolledAt: '2026-10-16T12:00:00.000Z',
       updatedAt: '2026-10-16T12:00:00.000Z',
     },
@@ -339,6 +363,93 @@ function createInitialSeedDatabase(): DatabaseSchema {
   };
 }
 
+function backfillEnrollments(db: DatabaseSchema): boolean {
+  let mutated = false;
+  const usedCodes = new Set<string>();
+  for (const e of Object.values(db.enrollments)) {
+    if (e.secretCode) usedCodes.add(e.secretCode);
+  }
+
+  for (const e of Object.values(db.enrollments)) {
+    const course = db.courses[e.courseId];
+    if (!e.status) {
+      e.status =
+        e.accessStatus === 'active'
+          ? 'ACTIVE'
+          : e.accessStatus === 'pending'
+          ? 'PENDING'
+          : 'REJECTED';
+      mutated = true;
+    }
+    if (!e.paymentMethod) {
+      e.paymentMethod = course?.courseType === 'free' ? 'Free' : 'bKash';
+      mutated = true;
+    }
+    if (!e.createdAt) {
+      e.createdAt = e.enrolledAt;
+      mutated = true;
+    }
+    if (e.activatedAt === undefined) {
+      e.activatedAt = e.accessStatus === 'active' ? e.updatedAt || e.enrolledAt : null;
+      mutated = true;
+    }
+    if (!e.secretCode) {
+      const deterministicSuffix = crypto
+        .createHash('sha256')
+        .update(e.id)
+        .digest('hex')
+        .toUpperCase()
+        .replace(/[^2-9A-HJ-NP-Z]/g, '8')
+        .slice(0, 6);
+      const code = `EDU-${deterministicSuffix}`;
+      e.secretCode = usedCodes.has(code)
+        ? `EDU-${Math.random().toString(36).toUpperCase().slice(2, 8).padEnd(6, '9')}`
+        : code;
+      usedCodes.add(e.secretCode);
+      mutated = true;
+    }
+  }
+
+  // Ensure demo pending enrollment EDU-8F29K1 exists if student_alex has no enrollment for course_cloud_architecture
+  const alexPendingKey = makeEnrollmentId('student_alex', 'course_cloud_architecture');
+  if (
+    db.users.student_alex &&
+    db.courses.course_cloud_architecture &&
+    !db.enrollments[alexPendingKey]
+  ) {
+    db.enrollments[alexPendingKey] = {
+      id: alexPendingKey,
+      userId: 'student_alex',
+      courseId: 'course_cloud_architecture',
+      accessStatus: 'pending',
+      status: 'PENDING',
+      secretCode: 'EDU-8F29K1',
+      paymentMethod: 'bKash',
+      createdAt: '2026-10-17T08:30:00.000Z',
+      activatedAt: null,
+      enrolledAt: '2026-10-17T08:30:00.000Z',
+      updatedAt: '2026-10-17T08:30:00.000Z',
+    };
+    mutated = true;
+  }
+
+  const seededIdsToUpgrade = [
+    'lesson_ts_3',
+    'lesson_ui_1',
+    'lesson_cloud_1',
+    'lesson_cloud_4_draft',
+    'lesson_sec_1',
+  ];
+  for (const lid of seededIdsToUpgrade) {
+    if (db.lessons[lid] && db.lessons[lid].youtubeVideoId === 'M7lc1UVf-VE') {
+      db.lessons[lid].youtubeVideoId = 'BwuLxPH8IDs';
+      mutated = true;
+    }
+  }
+
+  return mutated;
+}
+
 let memoryCache: DatabaseSchema | null = null;
 
 export function readDb(): DatabaseSchema {
@@ -349,7 +460,11 @@ export function readDb(): DatabaseSchema {
       const raw = fs.readFileSync(DB_FILE, 'utf8');
       const parsed = JSON.parse(raw) as DatabaseSchema;
       if (parsed && parsed.users && parsed.courses && parsed.lessons) {
-        memoryCache = parsed;
+        if (backfillEnrollments(parsed)) {
+          writeDb(parsed);
+        } else {
+          memoryCache = parsed;
+        }
         return parsed;
       }
     }

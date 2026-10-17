@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { authenticateRequest, readDb, toPublicUserProfile } from '@/lib/server-db';
+import { calculateAdminEnrollmentMetrics } from '@/lib/lms-logic';
 
 export async function GET(request: Request) {
   try {
@@ -30,6 +31,7 @@ export async function GET(request: Request) {
     const progressRecords = Object.values(db.lessonProgress);
 
     const students = users.filter((u) => u.role === 'student');
+    const enrollmentMetrics = calculateAdminEnrollmentMetrics({ courses, enrollments });
 
     return NextResponse.json(
       {
@@ -40,8 +42,11 @@ export async function GET(request: Request) {
           publishedLessons: lessons.filter((l) => l.isPublished).length,
           totalStudents: students.length,
           totalUsers: users.length,
-          activeEnrollments: enrollments.filter((e) => e.accessStatus === 'active').length,
+          activeEnrollments: enrollmentMetrics.totalEnrolledStudents,
           totalEnrollments: enrollments.length,
+          totalRevenue: enrollmentMetrics.totalRevenue,
+          pendingApprovals: enrollmentMetrics.pendingApprovals,
+          rejectedEnrollments: enrollmentMetrics.rejectedEnrollments,
         },
         courses,
         lessons,

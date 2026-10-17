@@ -7,9 +7,13 @@ import {
   ArrowRight,
   BookOpen,
   CheckCircle2,
+  Clock,
   Compass,
+  Copy,
   Gift,
+  KeyRound,
   LayoutDashboard,
+  Lock,
   LogOut,
   PlayCircle,
   User,
@@ -18,8 +22,10 @@ import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { CourseCard } from '@/components/course-card';
 import { CourseProgressBar } from '@/components/course-progress-bar';
+import { BkashCheckoutModal } from '@/components/bkash-checkout-modal';
 import { useLms } from '@/components/lms-provider';
-import { updateUserDisplayName } from '@/lib/lms-client';
+import { updateUserDisplayName, type EnrichedCourse } from '@/lib/lms-client';
+import type { Enrollment } from '@/lib/lms-logic';
 
 type StudentTab = 'overview' | 'my-courses' | 'explore' | 'free-courses' | 'profile';
 
@@ -36,6 +42,7 @@ function StudentDashboardContent() {
     enrollments,
     progressRecords,
     setSessionUser,
+    refreshUserData,
     logout,
     notify,
   } = useLms();
@@ -43,11 +50,25 @@ function StudentDashboardContent() {
   const [activeTab, setActiveTab] = useState<StudentTab>(initialTab);
   const [customDisplayName, setCustomDisplayName] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [selectedPendingModal, setSelectedPendingModal] = useState<{
+    course: EnrichedCourse;
+    enrollment: Enrollment;
+  } | null>(null);
 
   const displayNameInput = customDisplayName ?? user?.displayName ?? '';
 
   const activeEnrollments = useMemo(
-    () => enrollments.filter((e) => e.accessStatus === 'active'),
+    () => enrollments.filter((e) => e.accessStatus === 'active' || e.status === 'ACTIVE'),
+    [enrollments]
+  );
+
+  const pendingEnrollments = useMemo(
+    () =>
+      enrollments.filter(
+        (e) =>
+          (e.accessStatus === 'pending' || e.status === 'PENDING') &&
+          e.accessStatus !== 'active'
+      ),
     [enrollments]
   );
 
@@ -58,6 +79,16 @@ function StudentDashboardContent() {
     }
     return map;
   }, [courses]);
+
+  const myPendingCourses = useMemo(() => {
+    return pendingEnrollments
+      .map((enrollment) => {
+        const course = enrolledCourseMap.get(enrollment.courseId);
+        if (!course) return null;
+        return { course, enrollment };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [pendingEnrollments, enrolledCourseMap]);
 
   const myEnrolledCourses = useMemo(() => {
     return activeEnrollments
@@ -297,6 +328,86 @@ function StudentDashboardContent() {
           {/* TAB: OVERVIEW */}
           {activeTab === 'overview' && (
             <div className="space-y-8">
+              {/* Pending bKash Verification / Under Review Banner */}
+              {myPendingCourses.length > 0 && (
+                <div
+                  data-testid="student-pending-approvals"
+                  className="bg-amber-50/90 border border-amber-200 rounded-xl p-6 space-y-4"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/80 pb-3.5">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-amber-800 shrink-0" />
+                      <h2 className="text-sm font-bold text-amber-950">
+                        Payment under review / Pending approval ({myPendingCourses.length})
+                      </h2>
+                    </div>
+                    <span className="text-xs font-medium text-amber-900">
+                      Course content remains locked until Secret Code activation
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {myPendingCourses.map(({ course, enrollment }) => (
+                      <div
+                        key={enrollment.id}
+                        className="bg-white border border-amber-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-2 text-xs text-slate-600">
+                            <span className="inline-flex items-center gap-1 font-semibold text-amber-800">
+                              <Lock className="w-3.5 h-3.5" />
+                              <span>PENDING APPROVAL</span>
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span>bKash Fee: ${course.price}</span>
+                          </div>
+                          <p className="text-sm font-bold text-slate-900 truncate">
+                            {course.title}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Send your Secret Code via WhatsApp to support for immediate course
+                            activation.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                          {enrollment.secretCode && (
+                            <div className="inline-flex items-center gap-2 bg-slate-900 text-white px-3 py-1.5 rounded-lg">
+                              <KeyRound className="w-3.5 h-3.5 text-indigo-300" />
+                              <span className="text-xs font-mono font-bold tracking-wider">
+                                {enrollment.secretCode}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void navigator.clipboard.writeText(enrollment.secretCode || '');
+                                  notify(
+                                    `Secret Code ${enrollment.secretCode} copied!`,
+                                    'success'
+                                  );
+                                }}
+                                aria-label={`Copy Secret Code ${enrollment.secretCode}`}
+                                className="p-1 text-slate-300 hover:text-white cursor-pointer"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPendingModal({ course, enrollment })}
+                            className="px-3.5 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
+                          >
+                            bKash & WhatsApp Details
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Continue Learning Section */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -664,6 +775,20 @@ function StudentDashboardContent() {
           )}
         </section>
       </div>
+
+      {selectedPendingModal && (
+        <BkashCheckoutModal
+          course={selectedPendingModal.course}
+          user={user}
+          existingEnrollment={selectedPendingModal.enrollment}
+          isOpen={true}
+          onClose={() => setSelectedPendingModal(null)}
+          onEnrollmentInitiated={() => {
+            void refreshUserData();
+          }}
+          onNotify={notify}
+        />
+      )}
     </div>
   );
 }

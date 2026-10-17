@@ -646,6 +646,9 @@ export interface AdminOverviewPayload {
     totalUsers: number;
     activeEnrollments: number;
     totalEnrollments: number;
+    totalRevenue?: number;
+    pendingApprovals?: number;
+    rejectedEnrollments?: number;
   };
   courses: Course[];
   lessons: Lesson[];
@@ -667,3 +670,191 @@ export async function fetchAdminOverview(): Promise<AdminOverviewPayload> {
   }
   return data;
 }
+
+export interface InitiatePaidEnrollmentResponse {
+  enrollment: Enrollment;
+  secretCode: string;
+  course: {
+    id: string;
+    title: string;
+    price: number;
+    category: string;
+  };
+  bkashConfig: {
+    merchantNumber: string;
+    personalNumber: string;
+    whatsappNumber: string;
+    accountName: string;
+  };
+  isExistingPending: boolean;
+}
+
+export async function initiatePaidEnrollment(params: {
+  courseId: string;
+  trxId?: string;
+  senderPhone?: string;
+}): Promise<InitiatePaidEnrollmentResponse> {
+  const headers = await getAuthHeaders();
+  const res = await fetch('/api/enrollment/initiate', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as Partial<InitiatePaidEnrollmentResponse> & { error?: string };
+  if (!res.ok || !data.enrollment || !data.secretCode || !data.course || !data.bkashConfig) {
+    throw new Error(data.error || 'Unable to initiate bKash course enrollment.');
+  }
+
+  // Sync pending enrollment to Cloud Firestore if authenticated via Firebase Auth with verified email
+  if (auth.currentUser && auth.currentUser.emailVerified) {
+    const uid = auth.currentUser.uid;
+    const enrollmentId = makeEnrollmentId(uid, params.courseId);
+    const path = `enrollments/${enrollmentId}`;
+    try {
+      const courseSnap = await getDoc(doc(db, 'courses', params.courseId));
+      if (courseSnap.exists()) {
+        await setDoc(doc(db, 'enrollments', enrollmentId), {
+          id: enrollmentId,
+          userId: uid,
+          courseId: params.courseId,
+          accessStatus: 'pending',
+          status: 'PENDING',
+          secretCode: data.secretCode,
+          paymentMethod: 'bKash',
+          enrolledAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, path);
+    }
+  }
+
+  return {
+    enrollment: data.enrollment,
+    secretCode: data.secretCode,
+    course: data.course,
+    bkashConfig: data.bkashConfig,
+    isExistingPending: Boolean(data.isExistingPending),
+  };
+}
+
+export interface VerifiedSecretCodeEnrollment extends Enrollment {
+  status: 'PENDING' | 'ACTIVE' | 'REJECTED';
+  secretCode: string;
+  paymentMethod: string;
+  createdAt: string;
+  activatedAt: string | null;
+  studentName: string;
+  studentEmail: string;
+  courseTitle: string;
+  coursePrice: number;
+  courseType: 'free' | 'paid';
+  courseCategory?: string;
+}
+
+export async function verifySecretCodeAdmin(
+  secretCode: string
+): Promise<VerifiedSecretCodeEnrollment> {
+  const headers = await getAuthHeaders();
+  const res = await fetch('/api/admin/enrollment/verify-code', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ secretCode }),
+  });
+  const data = (await res.json()) as {
+    verified?: boolean;
+    enrollment?: VerifiedSecretCodeEnrollment;
+    error?: string;
+  };
+  if (!res.ok || !data.enrollment) {
+    throw new Error(data.error || 'Failed to verify Secret Code.');
+  }
+  return data.enrollment;
+}
+
+export async function approveEnrollmentByCodeAdmin(params: {
+  secretCode: string;
+  action?: 'APPROVE' | 'REJECT';
+}): Promise<{ enrollment: VerifiedSecretCodeEnrollment; message: string }> {
+  const headers = await getAuthHeaders();
+  const res = await fetch('/api/admin/enrollment/approve-by-code', {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as {
+    enrollment?: VerifiedSecretCodeEnrollment;
+    message?: string;
+    error?: string;
+  };
+  if (!res.ok || !data.enrollment) {
+    throw new Error(data.error || 'Failed to approve Secret Code.');
+  }
+  return {
+    enrollment: data.enrollment,
+    message: data.message || 'Enrollment updated successfully.',
+  };
+}
+
+export interface AdminEnrollmentsListResponse {
+  enrollments: VerifiedSecretCodeEnrollment[];
+  metrics: {
+    totalEnrolledStudents: number;
+    uniqueActiveStudents: number;
+    totalRevenue: number;
+    pendingApprovals: number;
+    rejectedEnrollments: number;
+    activeCourses: number;
+    totalEnrollments: number;
+  };
+  pagination: {
+    page: number;
+    limit: number;
+    totalItems: number;
+    totalPages: number;
+  };
+}
+
+export async function fetchAdminEnrollments(params?: {
+  status?: 'ALL' | 'PENDING' | 'ACTIVE' | 'REJECTED';
+  search?: string;
+  page?: number;
+  limit?: number;
+}): Promise<AdminEnrollmentsListResponse> {
+  const headers = await getAuthHeaders();
+  const query = new URLSearchParams();
+  if (params?.status) query.set('status', params.status);
+  if (params?.search) query.set('search', params.search);
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.limit) query.set('limit', String(params.limit));
+
+  const res = await fetch(`/api/admin/enrollments?${query.toString()}`, {
+    method: 'GET',
+    headers,
+    cache: 'no-store',
+  });
+  const data = (await res.json()) as AdminEnrollmentsListResponse & { error?: string };
+  if (!res.ok || !data.enrollments || !data.metrics) {
+    throw new Error(data.error || 'Failed to fetch admin enrollments.');
+  }
+  return data;
+}
+
+export async function updateAdminEnrollmentStatus(params: {
+  enrollmentId: string;
+  status: 'PENDING' | 'ACTIVE' | 'REJECTED';
+}): Promise<Enrollment> {
+  const headers = await getAuthHeaders();
+  const res = await fetch('/api/admin/enrollments', {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(params),
+  });
+  const data = (await res.json()) as { enrollment?: Enrollment; error?: string };
+  if (!res.ok || !data.enrollment) {
+    throw new Error(data.error || 'Failed to update enrollment status.');
+  }
+  return data.enrollment;
+}
+

@@ -11,6 +11,17 @@ import {
   getAuthorizedCourseLessons,
   calculateCourseProgress,
   calculateCourseStudentDistribution,
+  calculateAdminEnrollmentMetrics,
+  canInitiatePaidEnrollment,
+  generateSecretCode,
+  isValidSecretCodeFormat,
+  normalizeSecretCode,
+  clampVolume,
+  computeSeekOffset,
+  getQualityShortLabel,
+  getQualityTargetDimensions,
+  isValidVideoQualityCode,
+  YOUTUBE_QUALITY_OPTIONS,
   type Course,
   type Lesson,
   type Enrollment,
@@ -284,3 +295,143 @@ test('calculateCourseStudentDistribution ranks courses by active student count a
   assert.equal(dist[1].sharePercentage, 33);
 });
 
+test('generateSecretCode, normalizeSecretCode, and isValidSecretCodeFormat handle bKash secret codes', () => {
+  const code = generateSecretCode(['EDU-8F29K1']);
+  assert.equal(isValidSecretCodeFormat(code), true);
+  assert.notEqual(code, 'EDU-8F29K1');
+  assert.equal(normalizeSecretCode('  edu-8f29k1 '), 'EDU-8F29K1');
+  assert.equal(normalizeSecretCode('edu8f29k1'), 'EDU-8F29K1');
+  assert.equal(isValidSecretCodeFormat('edu-8f29k1'), true);
+  assert.equal(isValidSecretCodeFormat('INVALID'), false);
+});
+
+test('canInitiatePaidEnrollment and calculateAdminEnrollmentMetrics enforce bKash purchase rules and revenue math', () => {
+  const now = new Date().toISOString();
+  const paidCourse: Course = {
+    id: 'c_paid',
+    title: 'Cloud Security',
+    description: 'Desc',
+    thumbnailUrl: '/thumbnails/database.svg',
+    category: 'Security',
+    courseType: 'paid',
+    price: 120,
+    isPublished: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const freeCourse: Course = {
+    ...paidCourse,
+    id: 'c_free',
+    courseType: 'free',
+    price: 0,
+  };
+
+  assert.equal(
+    canInitiatePaidEnrollment({
+      user: { uid: 'u1', role: 'student' },
+      course: paidCourse,
+      existingEnrollment: null,
+    }).allowed,
+    true
+  );
+
+  assert.equal(
+    canInitiatePaidEnrollment({
+      user: { uid: 'u1', role: 'student' },
+      course: freeCourse,
+      existingEnrollment: null,
+    }).allowed,
+    false
+  );
+
+  assert.equal(
+    canInitiatePaidEnrollment({
+      user: { uid: 'u1', role: 'student' },
+      course: paidCourse,
+      existingEnrollment: {
+        id: 'u1_c_paid',
+        userId: 'u1',
+        courseId: 'c_paid',
+        accessStatus: 'active',
+        status: 'ACTIVE',
+      },
+    }).allowed,
+    false
+  );
+
+  const metrics = calculateAdminEnrollmentMetrics({
+    courses: [paidCourse, freeCourse],
+    enrollments: [
+      {
+        id: 'u1_c_paid',
+        userId: 'u1',
+        courseId: 'c_paid',
+        accessStatus: 'active',
+        status: 'ACTIVE',
+        secretCode: 'EDU-4M92C7',
+        enrolledAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'u2_c_paid',
+        userId: 'u2',
+        courseId: 'c_paid',
+        accessStatus: 'pending',
+        status: 'PENDING',
+        secretCode: 'EDU-8F29K1',
+        enrolledAt: now,
+        updatedAt: now,
+      },
+    ],
+  });
+
+  assert.equal(metrics.totalEnrolledStudents, 1);
+  assert.equal(metrics.totalRevenue, 120);
+  assert.equal(metrics.pendingApprovals, 1);
+  assert.equal(metrics.activeCourses, 2);
+});
+
+test('clampVolume clamps and rounds manual volume values (including 33%, 0%, 100%)', () => {
+  assert.equal(clampVolume(33), 33);
+  assert.equal(clampVolume('33'), 33);
+  assert.equal(clampVolume(33.4), 33);
+  assert.equal(clampVolume(0), 0);
+  assert.equal(clampVolume(100), 100);
+  assert.equal(clampVolume(-15), 0);
+  assert.equal(clampVolume(145), 100);
+  assert.equal(clampVolume('invalid', 33), 33);
+});
+
+test('computeSeekOffset calculates +10s forward and -10s backward safely within bounds', () => {
+  assert.equal(computeSeekOffset(45, 10, 300), 55);
+  assert.equal(computeSeekOffset(45, -10, 300), 35);
+  assert.equal(computeSeekOffset(4, -10, 300), 0);
+  assert.equal(computeSeekOffset(295, 10, 300), 300);
+});
+
+test('video quality helpers validate quality codes and buildYouTubeEmbedUrl includes vq parameter', () => {
+  assert.equal(YOUTUBE_QUALITY_OPTIONS.length, 6);
+  assert.equal(isValidVideoQualityCode('hd1080'), true);
+  assert.equal(isValidVideoQualityCode('hd720'), true);
+  assert.equal(isValidVideoQualityCode('large'), true);
+  assert.equal(isValidVideoQualityCode('4k_ultra'), false);
+  assert.equal(getQualityShortLabel('hd1080'), '1080p');
+  assert.equal(getQualityShortLabel('hd720'), '720p');
+  assert.equal(getQualityShortLabel('default'), 'Auto');
+
+  const urlWithQuality = buildYouTubeEmbedUrl('M7lc1UVf-VE', {
+    autoplay: true,
+    vq: 'hd1080',
+    start: 130,
+  });
+  assert.equal(urlWithQuality.includes('vq=hd1080'), true);
+  assert.equal(urlWithQuality.includes('hd=1'), true);
+  assert.equal(urlWithQuality.includes('start=130'), true);
+
+  assert.deepEqual(getQualityTargetDimensions('hd1080'), { width: 1920, height: 1080 });
+  assert.deepEqual(getQualityTargetDimensions('default'), { width: 1920, height: 1080 });
+  assert.deepEqual(getQualityTargetDimensions('hd720'), { width: 1280, height: 720 });
+  assert.deepEqual(getQualityTargetDimensions('large'), { width: 854, height: 480 });
+  assert.deepEqual(getQualityTargetDimensions('medium'), { width: 640, height: 360 });
+  assert.deepEqual(getQualityTargetDimensions('small'), { width: 426, height: 240 });
+});

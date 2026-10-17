@@ -1,0 +1,116 @@
+// Prisma Schema for DIU EduTech LMS — Manual bKash Course Purchase & Secret Code Verification System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STUDENT
+  ADMIN
+}
+
+enum CourseType {
+  FREE
+  PAID
+}
+
+enum EnrollmentStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+}
+
+model User {
+  id           String           @id @default(cuid())
+  displayName  String
+  email        String           @unique
+  passwordHash String?
+  role         UserRole         @default(STUDENT)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  enrollments  Enrollment[]
+  progress     LessonProgress[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Course {
+  id           String           @id @default(cuid())
+  title        String
+  description  String
+  thumbnailUrl String
+  category     String
+  courseType   CourseType       @default(FREE)
+  price        Float            @default(0)
+  isPublished  Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  lessons      Lesson[]
+  enrollments  Enrollment[]
+  progress     LessonProgress[]
+
+  @@index([isPublished, courseType])
+}
+
+model Lesson {
+  id             String           @id @default(cuid())
+  courseId       String
+  title          String
+  youtubeVideoId String
+  lessonOrder    Int
+  isPublished    Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  course         Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  progress       LessonProgress[]
+
+  @@index([courseId, lessonOrder])
+}
+
+model Enrollment {
+  id            String           @id
+  userId        String
+  courseId      String
+  secretCode    String           @unique
+  status        EnrollmentStatus @default(PENDING)
+  accessStatus  String           @default("pending")
+  paymentMethod String           @default("bKash")
+  trxId         String?
+  senderPhone   String?
+  createdAt     DateTime         @default(now())
+  activatedAt   DateTime?
+  enrolledAt    DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course        Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([secretCode])
+  @@index([status])
+  @@index([userId])
+  @@index([courseId])
+}
+
+model LessonProgress {
+  id          String   @id
+  userId      String
+  courseId    String
+  lessonId    String
+  isCompleted Boolean  @default(false)
+  completedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId, courseId])
+}

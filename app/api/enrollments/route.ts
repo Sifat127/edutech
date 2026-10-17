@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { authenticateRequest, readDb, writeDb } from '@/lib/server-db';
 import {
   canEnrollInFreeCourse,
+  generateSecretCode,
   isValidId,
   makeEnrollmentId,
   type AccessStatus,
@@ -67,16 +68,36 @@ export async function POST(request: Request) {
 
       const requestedStatus = body.accessStatus as AccessStatus | undefined;
       const accessStatus: AccessStatus =
-        requestedStatus === 'revoked' || requestedStatus === 'pending' ? requestedStatus : 'active';
+        requestedStatus === 'revoked' ||
+        requestedStatus === 'rejected' ||
+        requestedStatus === 'pending'
+          ? requestedStatus
+          : 'active';
+
+      const statusUpper =
+        accessStatus === 'active'
+          ? 'ACTIVE'
+          : accessStatus === 'pending'
+          ? 'PENDING'
+          : 'REJECTED';
 
       const enrollmentId = makeEnrollmentId(targetUserId, courseId);
       const existing = db.enrollments[enrollmentId];
+      const existingCodes = Object.values(db.enrollments)
+        .map((e) => e.secretCode)
+        .filter((c): c is string => Boolean(c));
 
       const updated: Enrollment = {
         id: enrollmentId,
         userId: targetUserId,
         courseId,
         accessStatus,
+        status: statusUpper,
+        secretCode: existing?.secretCode || generateSecretCode(existingCodes),
+        paymentMethod:
+          existing?.paymentMethod || (course.courseType === 'free' ? 'Free' : 'bKash'),
+        createdAt: existing?.createdAt || existing?.enrolledAt || now,
+        activatedAt: statusUpper === 'ACTIVE' ? now : existing?.activatedAt ?? null,
         enrolledAt: existing ? existing.enrolledAt : now,
         updatedAt: now,
       };
@@ -104,11 +125,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: check.reason }, { status: check.statusCode });
     }
 
+    const existingCodes = Object.values(db.enrollments)
+      .map((e) => e.secretCode)
+      .filter((c): c is string => Boolean(c));
+
     const newEnrollment: Enrollment = {
       id: enrollmentId,
       userId: caller.uid,
       courseId,
       accessStatus: 'active',
+      status: 'ACTIVE',
+      secretCode: existing?.secretCode || generateSecretCode(existingCodes),
+      paymentMethod: 'Free',
+      createdAt: now,
+      activatedAt: now,
       enrolledAt: now,
       updatedAt: now,
     };

@@ -1,6 +1,7 @@
 export type UserRole = 'student' | 'admin';
 export type CourseType = 'free' | 'paid';
-export type AccessStatus = 'active' | 'revoked' | 'pending';
+export type AccessStatus = 'active' | 'revoked' | 'pending' | 'rejected';
+export type EnrollmentStatusUpper = 'PENDING' | 'ACTIVE' | 'REJECTED';
 
 export interface UserProfile {
   uid: string;
@@ -48,8 +49,89 @@ export interface Enrollment {
   userId: string;
   courseId: string;
   accessStatus: AccessStatus;
+  status?: EnrollmentStatusUpper;
+  secretCode?: string;
+  paymentMethod?: string;
+  trxId?: string;
+  senderPhone?: string;
+  createdAt?: string;
+  activatedAt?: string | null;
   enrolledAt: string;
   updatedAt: string;
+}
+
+export const BKASH_PAYMENT_CONFIG = {
+  merchantNumber: '01711-984210',
+  personalNumber: '01819-442901',
+  whatsappNumber: '8801711984210',
+  accountName: 'DIU EduTech Official',
+} as const;
+
+const SECRET_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+export const SECRET_CODE_REGEX = /^EDU-[A-Z0-9]{6}$/;
+
+/**
+ * Normalizes a raw user-provided secret code (e.g., "edu-8f29k1" or "EDU8F29K1")
+ * into standard uppercase "EDU-XXXXXX" format.
+ */
+export function normalizeSecretCode(input: unknown): string {
+  if (typeof input !== 'string') return '';
+  const cleaned = input.trim().toUpperCase().replace(/\s+/g, '');
+  if (/^EDU[A-Z0-9]{6}$/.test(cleaned)) {
+    return `EDU-${cleaned.slice(3)}`;
+  }
+  return cleaned;
+}
+
+export function isValidSecretCodeFormat(input: unknown): boolean {
+  const normalized = normalizeSecretCode(input);
+  return SECRET_CODE_REGEX.test(normalized);
+}
+
+/**
+ * Generates a unique 10-character alphanumeric Secret Code formatted as "EDU-XXXXXX"
+ * (e.g., "EDU-8F29K1") guaranteed not to collide with any existing code.
+ */
+export function generateSecretCode(existingCodes?: Iterable<string>): string {
+  const taken = new Set<string>();
+  if (existingCodes) {
+    for (const code of existingCodes) {
+      if (code) taken.add(normalizeSecretCode(code));
+    }
+  }
+
+  for (let attempt = 0; attempt < 50; attempt++) {
+    let suffix = '';
+    for (let i = 0; i < 6; i++) {
+      const idx = Math.floor(Math.random() * SECRET_CODE_ALPHABET.length);
+      suffix += SECRET_CODE_ALPHABET[idx];
+    }
+    const candidate = `EDU-${suffix}`;
+    if (!taken.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  const fallback = Date.now().toString(36).toUpperCase().slice(-6).padStart(6, '8');
+  return `EDU-${fallback}`;
+}
+
+export function toEnrollmentStatusUpper(
+  enrollment: Pick<Enrollment, 'accessStatus' | 'status'>
+): EnrollmentStatusUpper {
+  if (enrollment.status === 'ACTIVE' || enrollment.accessStatus === 'active') {
+    return 'ACTIVE';
+  }
+  if (enrollment.status === 'PENDING' || enrollment.accessStatus === 'pending') {
+    return 'PENDING';
+  }
+  return 'REJECTED';
+}
+
+export function toAccessStatusFromUpper(status: EnrollmentStatusUpper): AccessStatus {
+  if (status === 'ACTIVE') return 'active';
+  if (status === 'PENDING') return 'pending';
+  return 'revoked';
 }
 
 export interface LessonProgress {
@@ -177,19 +259,114 @@ export function extractYouTubeVideoId(input: unknown): ValidationResult<string> 
   return { valid: true, data: candidateId, statusCode: 200 };
 }
 
+export type VideoQualityCode = 'default' | 'hd1080' | 'hd720' | 'large' | 'medium' | 'small';
+
+export interface VideoQualityOption {
+  code: VideoQualityCode;
+  label: string;
+  shortLabel: string;
+  badge?: string;
+}
+
+export const YOUTUBE_QUALITY_OPTIONS: readonly VideoQualityOption[] = [
+  { code: 'default', label: 'Auto (Recommended)', shortLabel: 'Auto' },
+  { code: 'hd1080', label: '1080p Full HD', shortLabel: '1080p', badge: 'HD' },
+  { code: 'hd720', label: '720p HD', shortLabel: '720p', badge: 'HD' },
+  { code: 'large', label: '480p Standard', shortLabel: '480p' },
+  { code: 'medium', label: '360p Medium', shortLabel: '360p' },
+  { code: 'small', label: '240p Data Saver', shortLabel: '240p' },
+] as const;
+
+export function isValidVideoQualityCode(value: unknown): value is VideoQualityCode {
+  return (
+    typeof value === 'string' &&
+    YOUTUBE_QUALITY_OPTIONS.some((opt) => opt.code === value)
+  );
+}
+
+export function getQualityShortLabel(code: VideoQualityCode): string {
+  const found = YOUTUBE_QUALITY_OPTIONS.find((opt) => opt.code === code);
+  return found ? found.shortLabel : 'Auto';
+}
+
+export interface VideoQualityDimensions {
+  width: number;
+  height: number;
+}
+
+/**
+ * Returns the internal 16:9 viewport dimensions for the YouTube iframe so YouTube's
+ * HTML5 adaptive bitrate (ABR) engine unlocks 1080p (1920x1080) and 720p (1280x720)
+ * instead of capping at 480p due to a smaller container box.
+ */
+export function getQualityTargetDimensions(code: VideoQualityCode): VideoQualityDimensions {
+  switch (code) {
+    case 'hd1080':
+    case 'default':
+      return { width: 1920, height: 1080 };
+    case 'hd720':
+      return { width: 1280, height: 720 };
+    case 'large':
+      return { width: 854, height: 480 };
+    case 'medium':
+      return { width: 640, height: 360 };
+    case 'small':
+      return { width: 426, height: 240 };
+    default:
+      return { width: 1920, height: 1080 };
+  }
+}
+
+/**
+ * Clamps and rounds any numeric or string input to an integer volume percentage in [0, 100].
+ */
+export function clampVolume(value: unknown, fallback = 100): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return Math.max(0, Math.min(100, Math.round(fallback)));
+  }
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+/**
+ * Computes a safe target seek timestamp (in seconds) when jumping forward/backward
+ * (e.g., +10s on ArrowRight or -10s on ArrowLeft).
+ */
+export function computeSeekOffset(
+  currentTime: number,
+  deltaSeconds: number,
+  duration: number
+): number {
+  const safeCurrent = Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0;
+  const safeDelta = Number.isFinite(deltaSeconds) ? deltaSeconds : 0;
+  const maxTime = Number.isFinite(duration) && duration > 0 ? Math.ceil(duration) : 5400;
+  const rawTarget = safeCurrent + safeDelta;
+  return Math.max(0, Math.min(maxTime, Math.round(rawTarget * 100) / 100));
+}
+
 /**
  * Generates the official YouTube embed URL from a validated 11-character video ID.
  */
 export function buildYouTubeEmbedUrl(
   videoId: string,
-  options?: { autoplay?: boolean; cc?: boolean }
+  options?: { autoplay?: boolean; cc?: boolean; vq?: VideoQualityCode; start?: number }
 ): string {
   if (!YOUTUBE_ID_REGEX.test(videoId)) {
     throw new Error('Invalid YouTube video ID');
   }
   if (options?.autoplay) {
     const ccParam = options.cc ? '&cc_load_policy=1' : '';
-    return `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1&enablejsapi=1&autoplay=1${ccParam}`;
+    const vqParam =
+      options.vq && options.vq !== 'default' ? `&vq=${encodeURIComponent(options.vq)}` : '';
+    const hdParam =
+      !options.vq || options.vq === 'hd1080' || options.vq === 'hd720' || options.vq === 'default'
+        ? '&hd=1'
+        : '';
+    const startParam =
+      typeof options.start === 'number' && options.start > 0
+        ? `&start=${Math.floor(options.start)}`
+        : '';
+    return `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1&enablejsapi=1&autoplay=1${hdParam}${ccParam}${vqParam}${startParam}`;
   }
   return `https://www.youtube.com/embed/${videoId}?rel=0`;
 }
@@ -387,7 +564,10 @@ export function canAccessCourseLessons(params: {
     };
   }
 
-  if (enrollment.accessStatus === 'revoked') {
+  if (
+    enrollment.accessStatus === 'revoked' ||
+    enrollment.accessStatus === 'rejected'
+  ) {
     return {
       allowed: false,
       statusCode: 403,
@@ -399,7 +579,7 @@ export function canAccessCourseLessons(params: {
     return {
       allowed: false,
       statusCode: 403,
-      reason: 'Your enrollment request is pending administrator approval.',
+      reason: 'Payment under review / Pending approval. Your course access will unlock automatically once an administrator activates your Secret Code.',
     };
   }
 
@@ -651,5 +831,123 @@ export function calculateCourseStudentDistribution(params: {
     }
     return a.title.localeCompare(b.title);
   });
+}
+
+/**
+ * Validates whether a student can initiate a manual bKash paid course enrollment.
+ */
+export function canInitiatePaidEnrollment(params: {
+  user: Pick<UserProfile, 'uid' | 'role'> | null;
+  course: Pick<Course, 'id' | 'courseType' | 'isPublished'> | null;
+  existingEnrollment: Pick<Enrollment, 'userId' | 'courseId' | 'accessStatus' | 'status'> | null;
+}): AccessCheckResult {
+  const { user, course, existingEnrollment } = params;
+
+  if (!user) {
+    return {
+      allowed: false,
+      statusCode: 401,
+      reason: 'Please log in to your student account to initiate course purchase.',
+    };
+  }
+
+  if (!course) {
+    return {
+      allowed: false,
+      statusCode: 404,
+      reason: 'Course not found.',
+    };
+  }
+
+  if (!course.isPublished && user.role !== 'admin') {
+    return {
+      allowed: false,
+      statusCode: 403,
+      reason: 'Cannot purchase an unpublished course.',
+    };
+  }
+
+  if (course.courseType !== 'paid') {
+    return {
+      allowed: false,
+      statusCode: 400,
+      reason: 'This is a free course. You can enroll directly without bKash verification.',
+    };
+  }
+
+  if (
+    existingEnrollment &&
+    (existingEnrollment.accessStatus === 'active' || existingEnrollment.status === 'ACTIVE')
+  ) {
+    return {
+      allowed: false,
+      statusCode: 409,
+      reason: 'You already have active access to this course.',
+    };
+  }
+
+  return {
+    allowed: true,
+    statusCode: 200,
+    reason: 'Paid enrollment initiation permitted.',
+  };
+}
+
+export interface AdminEnrollmentMetrics {
+  totalEnrolledStudents: number;
+  uniqueActiveStudents: number;
+  totalRevenue: number;
+  pendingApprovals: number;
+  rejectedEnrollments: number;
+  activeCourses: number;
+  totalEnrollments: number;
+}
+
+/**
+ * Computes Admin Dashboard summary metrics across enrollments and courses:
+ * - Total Enrolled Students (active enrollments)
+ * - Total Revenue / Sales (sum of paid course prices for ACTIVE enrollments)
+ * - Pending Approvals (count of PENDING enrollments awaiting Secret Code verification)
+ * - Active Courses (count of published courses)
+ */
+export function calculateAdminEnrollmentMetrics(params: {
+  courses: Course[];
+  enrollments: Enrollment[];
+}): AdminEnrollmentMetrics {
+  const courseMap = new Map(params.courses.map((c) => [c.id, c]));
+  const activeStudentIds = new Set<string>();
+  let totalEnrolledStudents = 0;
+  let totalRevenue = 0;
+  let pendingApprovals = 0;
+  let rejectedEnrollments = 0;
+
+  for (const enrollment of params.enrollments) {
+    const upper = toEnrollmentStatusUpper(enrollment);
+    const course = courseMap.get(enrollment.courseId);
+
+    if (upper === 'ACTIVE') {
+      totalEnrolledStudents += 1;
+      activeStudentIds.add(enrollment.userId);
+      if (course && course.courseType === 'paid' && course.price > 0) {
+        totalRevenue += course.price;
+      }
+    } else if (upper === 'PENDING') {
+      pendingApprovals += 1;
+    } else {
+      rejectedEnrollments += 1;
+    }
+  }
+
+  const activeCourses = params.courses.filter((c) => c.isPublished).length;
+
+  return {
+    totalEnrolledStudents,
+    uniqueActiveStudents: activeStudentIds.size,
+    totalRevenue: Math.round(totalRevenue * 100) / 100,
+    pendingApprovals,
+    rejectedEnrollments,
+    activeCourses,
+    totalEnrollments: params.enrollments.length,
+  };
 }
 

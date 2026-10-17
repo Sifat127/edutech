@@ -102,12 +102,15 @@ service cloud.firestore {
 
     function isValidEnrollment(data) {
       return data.keys().hasAll(['id', 'userId', 'courseId', 'accessStatus', 'enrolledAt', 'updatedAt']) &&
-        data.keys().hasOnly(['id', 'userId', 'courseId', 'accessStatus', 'enrolledAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'courseId', 'accessStatus', 'status', 'secretCode', 'paymentMethod', 'createdAt', 'activatedAt', 'enrolledAt', 'updatedAt']) &&
         isValidId(data.id) &&
         isValidId(data.userId) &&
         isValidId(data.courseId) &&
         data.id == data.userId + '_' + data.courseId &&
-        (data.accessStatus == 'active' || data.accessStatus == 'revoked' || data.accessStatus == 'pending') &&
+        (data.accessStatus == 'active' || data.accessStatus == 'revoked' || data.accessStatus == 'pending' || data.accessStatus == 'rejected') &&
+        (!('status' in data) || data.status == 'PENDING' || data.status == 'ACTIVE' || data.status == 'REJECTED') &&
+        (!('secretCode' in data) || (data.secretCode is string && data.secretCode.size() == 10 && data.secretCode.matches('^EDU-[A-Z0-9]{6}$'))) &&
+        (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() >= 1 && data.paymentMethod.size() <= 32)) &&
         data.enrolledAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -282,9 +285,12 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/courses/$(incoming().courseId)) && (
           isAdmin() || (
             incoming().userId == request.auth.uid &&
-            incoming().accessStatus == 'active' &&
-            get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.isPublished == true &&
-            get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.courseType == 'free'
+            get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.isPublished == true && (
+              (incoming().accessStatus == 'active' &&
+                get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.courseType == 'free') ||
+              (incoming().accessStatus == 'pending' &&
+                get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.courseType == 'paid')
+            )
           )
         );
 
@@ -296,7 +302,7 @@ service cloud.firestore {
         incoming().courseId == existing().courseId &&
         incoming().enrolledAt == existing().enrolledAt &&
         incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'updatedAt']) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'status', 'secretCode', 'paymentMethod', 'activatedAt', 'updatedAt']) &&
         isAdmin();
 
       allow delete: if isVerifiedUser() && isValidId(enrollmentId) && isAdmin();

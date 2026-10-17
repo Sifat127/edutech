@@ -7,10 +7,10 @@ import {
   ArrowDown,
   ArrowUp,
   BookOpen,
-  CheckCircle2,
   Edit3,
   ExternalLink,
   Film,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Plus,
@@ -25,6 +25,7 @@ import {
 import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { CourseDistributionChart } from '@/components/course-distribution-chart';
+import { AdminEnrollmentManager } from '@/components/admin-enrollment-manager';
 import { useLms } from '@/components/lms-provider';
 import {
   createCourseAdmin,
@@ -32,7 +33,6 @@ import {
   deleteCourseAdmin,
   deleteLessonAdmin,
   fetchAdminOverview,
-  setStudentEnrollmentAdmin,
   updateCourseAdmin,
   updateLessonAdmin,
   type AdminOverviewPayload,
@@ -91,7 +91,6 @@ export default function AdminDashboardPage() {
   const [studentSearch, setStudentSearch] = useState('');
   const [grantUserId, setGrantUserId] = useState('');
   const [grantCourseId, setGrantCourseId] = useState('');
-  const [grantingAccess, setGrantingAccess] = useState(false);
 
   const loadAdminData = useCallback(async () => {
     if (!user || user.role !== 'admin') return;
@@ -336,47 +335,6 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const handleGrantOrUpdateEnrollment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!grantUserId || !grantCourseId) {
-      notify('Select both a student and a course.', 'error');
-      return;
-    }
-    try {
-      setGrantingAccess(true);
-      await setStudentEnrollmentAdmin({
-        userId: grantUserId,
-        courseId: grantCourseId,
-        accessStatus: 'active',
-      });
-      await loadAdminData();
-      notify('Course access granted to student.', 'success');
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Failed to grant access.', 'error');
-    } finally {
-      setGrantingAccess(false);
-    }
-  };
-
-  const handleToggleEnrollmentStatus = async (
-    userId: string,
-    courseId: string,
-    nextStatus: 'active' | 'revoked'
-  ) => {
-    try {
-      await setStudentEnrollmentAdmin({ userId, courseId, accessStatus: nextStatus });
-      await loadAdminData();
-      notify(
-        nextStatus === 'active'
-          ? 'Enrollment access activated.'
-          : 'Enrollment access revoked.',
-        'info'
-      );
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Failed to update enrollment.', 'error');
-    }
-  };
-
   const filteredStudents = useMemo(() => {
     if (!adminData) return [];
     const q = studentSearch.trim().toLowerCase();
@@ -448,7 +406,6 @@ export default function AdminDashboardPage() {
   }
 
   const courseMap = new Map(adminData?.courses.map((c) => [c.id, c]) || []);
-  const userMap = new Map(adminData?.users.map((u) => [u.uid, u]) || []);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
@@ -603,68 +560,64 @@ export default function AdminDashboardPage() {
                       enrollments.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('enrollments')}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 cursor-pointer"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      <span>Verify Secret Code ({adminData.stats.pendingApprovals ?? 0})</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
                         resetCourseForm();
                         setActiveTab('courses');
                       }}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>New Course</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('lessons')}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add Lesson</span>
-                    </button>
                   </div>
                 </div>
 
-                {/* 4 Stat Summary Cards */}
+                {/* 4 Stat Summary Cards: Total Enrolled Students, Total Revenue/Sales, Pending Approvals, Active Courses */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 tabular-nums">
                   <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-1">
-                    <p className="text-xs font-medium text-slate-500">Total Courses</p>
+                    <p className="text-xs font-medium text-slate-500">Total Enrolled Students</p>
                     <p className="text-3xl font-bold text-slate-900 font-mono">
-                      {adminData.stats.totalCourses}
+                      {adminData.stats.activeEnrollments}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {adminData.stats.publishedCourses} Published
+                      {adminData.stats.totalStudents} Registered Accounts
                     </p>
                   </div>
 
                   <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-1">
-                    <p className="text-xs font-medium text-slate-500">Registered Students</p>
-                    <p className="text-3xl font-bold text-slate-900 font-mono">
-                      {adminData.stats.totalStudents}
+                    <p className="text-xs font-medium text-slate-500">Total Revenue / Sales</p>
+                    <p className="text-3xl font-bold text-emerald-700 font-mono">
+                      ${adminData.stats.totalRevenue ?? 0}
                     </p>
-                    <p className="text-xs text-slate-500">
-                      {adminData.stats.totalUsers} Total Accounts
-                    </p>
+                    <p className="text-xs text-slate-500">Verified bKash Paid Courses</p>
                   </div>
 
                   <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-1">
-                    <p className="text-xs font-medium text-slate-500">Video Lessons</p>
-                    <p className="text-3xl font-bold text-slate-900 font-mono">
-                      {adminData.stats.totalLessons}
+                    <p className="text-xs font-medium text-slate-500">Pending Approvals</p>
+                    <p className="text-3xl font-bold text-amber-700 font-mono">
+                      {adminData.stats.pendingApprovals ?? 0}
                     </p>
-                    <p className="text-xs text-slate-500">
-                      {adminData.stats.publishedLessons} Published
-                    </p>
+                    <p className="text-xs text-slate-500">Awaiting Secret Code Check</p>
                   </div>
 
                   <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-1">
-                    <p className="text-xs font-medium text-slate-500">Enrollments</p>
+                    <p className="text-xs font-medium text-slate-500">Active Courses</p>
                     <p className="text-3xl font-bold text-indigo-600 font-mono">
-                      {adminData.stats.totalEnrollments}
+                      {adminData.stats.publishedCourses}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {adminData.stats.activeEnrollments} Active Access
+                      {adminData.stats.totalLessons} Total Video Lessons
                     </p>
                   </div>
                 </div>
@@ -1388,173 +1341,17 @@ export default function AdminDashboardPage() {
 
             {/* TAB 5: ENROLLMENT & PAID ACCESS CONTROL */}
             {activeTab === 'enrollments' && adminData && (
-              <div className="space-y-8">
-                {/* Manual Grant Access Form */}
-                <div className="bg-white rounded-xl border border-slate-200 p-6 sm:p-8 space-y-5">
-                  <div>
-                    <h1 className="text-lg font-bold text-slate-900">
-                      Grant Paid or Free Course Access
-                    </h1>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Manually authorize a student to access a paid (or free) course, or restore a
-                      revoked enrollment.
-                    </p>
-                  </div>
-
-                  <form
-                    onSubmit={handleGrantOrUpdateEnrollment}
-                    className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end"
-                  >
-                    <div className="sm:col-span-5 space-y-1.5">
-                      <label
-                        htmlFor="grant-student-select"
-                        className="block text-xs font-semibold text-slate-700"
-                      >
-                        Select Student
-                      </label>
-                      <select
-                        id="grant-student-select"
-                        value={grantUserId}
-                        onChange={(e) => setGrantUserId(e.target.value)}
-                        className="w-full px-3.5 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900"
-                      >
-                        {adminData.users.map((u) => (
-                          <option key={u.uid} value={u.uid}>
-                            {u.displayName} ({u.email})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-5 space-y-1.5">
-                      <label
-                        htmlFor="grant-course-select"
-                        className="block text-xs font-semibold text-slate-700"
-                      >
-                        Select Course
-                      </label>
-                      <select
-                        id="grant-course-select"
-                        value={grantCourseId}
-                        onChange={(e) => setGrantCourseId(e.target.value)}
-                        className="w-full px-3.5 py-2 text-xs bg-white border border-slate-300 rounded-lg text-slate-900"
-                      >
-                        {adminData.courses.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.title} ({c.courseType === 'paid' ? `Paid $${c.price}` : 'Free'})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <button
-                        type="submit"
-                        disabled={grantingAccess}
-                        className="w-full py-2 px-4 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
-                      >
-                        {grantingAccess ? 'Granting...' : 'Grant Access'}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-
-                {/* Enrollments Table */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-200">
-                    <h2 className="text-sm font-bold text-slate-900">
-                      All Course Enrollments ({adminData.enrollments.length})
-                    </h2>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-semibold">
-                          <th className="py-3 px-4">Student</th>
-                          <th className="py-3 px-4">Course</th>
-                          <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-4">Enrolled Date</th>
-                          <th className="py-3 px-4 text-right">Access Control</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 tabular-nums">
-                        {adminData.enrollments.map((enrollment) => {
-                          const student = userMap.get(enrollment.userId);
-                          const course = courseMap.get(enrollment.courseId);
-                          const isActive = enrollment.accessStatus === 'active';
-
-                          return (
-                            <tr key={enrollment.id} className="hover:bg-slate-50/80">
-                              <td className="py-3.5 px-4">
-                                <p className="font-semibold text-slate-900">
-                                  {student?.displayName || enrollment.userId}
-                                </p>
-                                <p className="text-[11px] text-slate-500">{student?.email}</p>
-                              </td>
-                              <td className="py-3.5 px-4">
-                                <p className="font-semibold text-slate-900">
-                                  {course?.title || enrollment.courseId}
-                                </p>
-                                <p className="text-[11px] text-slate-500">
-                                  {course?.courseType === 'paid'
-                                    ? `Paid ($${course.price})`
-                                    : 'Free Course'}
-                                </p>
-                              </td>
-                              <td className="py-3.5 px-4">
-                                <span
-                                  className={
-                                    isActive
-                                      ? 'font-semibold text-emerald-700'
-                                      : 'font-semibold text-red-700'
-                                  }
-                                >
-                                  {isActive ? 'Active' : 'Revoked'}
-                                </span>
-                              </td>
-                              <td className="py-3.5 px-4 text-slate-500">
-                                {new Date(enrollment.enrolledAt).toLocaleDateString()}
-                              </td>
-                              <td className="py-3.5 px-4 text-right">
-                                {isActive ? (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleToggleEnrollmentStatus(
-                                        enrollment.userId,
-                                        enrollment.courseId,
-                                        'revoked'
-                                      )
-                                    }
-                                    className="font-semibold text-red-600 hover:text-red-800 cursor-pointer"
-                                  >
-                                    Revoke Access
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleToggleEnrollmentStatus(
-                                        enrollment.userId,
-                                        enrollment.courseId,
-                                        'active'
-                                      )
-                                    }
-                                    className="font-semibold text-emerald-700 hover:text-emerald-900 cursor-pointer"
-                                  >
-                                    Approve / Restore Access
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
+              <AdminEnrollmentManager
+                courses={adminData.courses}
+                users={adminData.users}
+                enrollments={adminData.enrollments}
+                initialGrantUserId={grantUserId}
+                initialGrantCourseId={grantCourseId}
+                onDataChanged={async () => {
+                  await Promise.all([loadAdminData(), refreshCourses()]);
+                }}
+                onNotify={notify}
+              />
             )}
 
             {/* TAB 6: SETTINGS */}
