@@ -1,0 +1,337 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered platform user profile with role-based access control.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Unique Firebase user identifier.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Full display name of the student or administrator.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified email address of the user.",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "role": {
+          "type": "string",
+          "description": "Authorization role assigned to the user.",
+          "enum": ["student", "admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the user profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the user profile was last updated."
+        }
+      },
+      "required": ["uid", "displayName", "email", "role", "createdAt", "updatedAt"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Trusted administrator lookup record.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Administrator user ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Administrator email address.",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin status was granted."
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "Educational course metadata supporting free and paid access tiers.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique course document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Course title displayed in catalog and player.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed course overview and learning outcomes.",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "thumbnailUrl": {
+          "type": "string",
+          "description": "Course thumbnail URL or asset path.",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "category": {
+          "type": "string",
+          "description": "Subject category of the course.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "courseType": {
+          "type": "string",
+          "description": "Access tier indicating whether the course is free or paid.",
+          "enum": ["free", "paid"]
+        },
+        "price": {
+          "type": "number",
+          "description": "Course price in USD (0 for free courses)."
+        },
+        "isPublished": {
+          "type": "boolean",
+          "description": "Whether the course is publicly visible in the catalog."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the course was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the course was last updated."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "description",
+        "thumbnailUrl",
+        "category",
+        "courseType",
+        "price",
+        "isPublished",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Lesson": {
+      "title": "Lesson",
+      "description": "Video lesson belonging to a course, backed by a validated YouTube Unlisted video ID.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique lesson document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Parent course ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Lesson title.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "youtubeVideoId": {
+          "type": "string",
+          "description": "Validated 11-character YouTube video ID.",
+          "minLength": 11,
+          "maxLength": 11,
+          "pattern": "^[a-zA-Z0-9_\\-]{11}$"
+        },
+        "lessonOrder": {
+          "type": "number",
+          "description": "1-indexed sequence position of the lesson within the course."
+        },
+        "isPublished": {
+          "type": "boolean",
+          "description": "Whether the lesson is published and watchable by enrolled students."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the lesson was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the lesson was last updated."
+        }
+      },
+      "required": [
+        "id",
+        "courseId",
+        "title",
+        "youtubeVideoId",
+        "lessonOrder",
+        "isPublished",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Enrollment": {
+      "title": "Enrollment",
+      "description": "Student enrollment record linking a user to a course with explicit access status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Composite enrollment ID formatted as {userId}_{courseId}.",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Enrolled student user ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Target course ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "accessStatus": {
+          "type": "string",
+          "description": "Current authorization status of the enrollment.",
+          "enum": ["active", "revoked", "pending"]
+        },
+        "enrolledAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when enrollment was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when enrollment was last updated."
+        }
+      },
+      "required": ["id", "userId", "courseId", "accessStatus", "enrolledAt", "updatedAt"]
+    },
+    "LessonProgress": {
+      "title": "LessonProgress",
+      "description": "Tracks a student's completion state for an individual lesson.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Composite progress ID formatted as {userId}_{lessonId}.",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Student user ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "courseId": {
+          "type": "string",
+          "description": "Course ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "lessonId": {
+          "type": "string",
+          "description": "Lesson ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "isCompleted": {
+          "type": "boolean",
+          "description": "Whether the student has completed the lesson."
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when completion state changed."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when progress was last updated."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "courseId",
+        "lessonId",
+        "isCompleted",
+        "completedAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles containing PII (email) and role. Read restricted to owner or admin; self-registration forces student role."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/Admin" },
+      "description": "Trusted administrator lookup collection."
+    },
+    "/courses/{courseId}": {
+      "schema": { "$ref": "#/entities/Course" },
+      "description": "Course catalog records. Published courses are readable by anyone; draft courses and all writes are restricted to admins."
+    },
+    "/lessons/{lessonId}": {
+      "schema": { "$ref": "#/entities/Lesson" },
+      "description": "Course lessons containing YouTube video IDs. Protected by enrollment and publication checks; writes restricted to admins."
+    },
+    "/enrollments/{enrollmentId}": {
+      "schema": { "$ref": "#/entities/Enrollment" },
+      "description": "Course enrollment records keyed by {userId}_{courseId}. Students may create active enrollments only for published free courses; paid enrollments require admin authorization."
+    },
+    "/lessonProgress/{progressId}": {
+      "schema": { "$ref": "#/entities/LessonProgress" },
+      "description": "Student lesson completion records keyed by {userId}_{lessonId}. Strictly isolated to the student owner and admins."
+    }
+  }
+}

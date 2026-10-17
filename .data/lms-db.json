@@ -1,0 +1,235 @@
+{
+  "users": {
+    "admin_bootstrap": {
+      "uid": "admin_bootstrap",
+      "displayName": "Elena Vance (Platform Admin)",
+      "email": "admin@lumina.edu",
+      "role": "admin",
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z",
+      "passwordHash": "e9b3d646594ebbd58d91ae30c61f31c8e92c59955e5ac486698d849e0087d990ec31626ceb537c774ffa08ef8fde725de9cc819b0522584c13ead5b8bce5f707",
+      "passwordSalt": "5ac63a24d37ee7e69f2315f686c6a5b5"
+    },
+    "student_alex": {
+      "uid": "student_alex",
+      "displayName": "Alex Rivera",
+      "email": "alex.rivera@student.edu",
+      "role": "student",
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z",
+      "passwordHash": "c350c06bb5877edef441a2c579ffb5f32c8bc8a88249b34ec4dcdcd425558d4783c6e11ad8cccacfdcd617741af95ade93aa2f4ae552ea7fc9cb8f77db18a87a",
+      "passwordSalt": "e3a12c09a20c4fce5e6b8aacf136760d"
+    },
+    "student_maya": {
+      "uid": "student_maya",
+      "displayName": "Maya Chen",
+      "email": "maya.chen@student.edu",
+      "role": "student",
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z",
+      "passwordHash": "c350c06bb5877edef441a2c579ffb5f32c8bc8a88249b34ec4dcdcd425558d4783c6e11ad8cccacfdcd617741af95ade93aa2f4ae552ea7fc9cb8f77db18a87a",
+      "passwordSalt": "e3a12c09a20c4fce5e6b8aacf136760d"
+    }
+  },
+  "courses": {
+    "course_ts_fundamentals": {
+      "id": "course_ts_fundamentals",
+      "title": "TypeScript Fundamentals & Type-Safe Architecture",
+      "description": "Master structural typing, generics, discriminated unions, and runtime validation patterns for production React and Node.js applications.",
+      "thumbnailUrl": "/thumbnails/typescript.svg",
+      "category": "Software Engineering",
+      "courseType": "free",
+      "price": 0,
+      "isPublished": true,
+      "createdAt": "2026-10-10T09:00:00.000Z",
+      "updatedAt": "2026-10-15T09:00:00.000Z"
+    },
+    "course_ui_systems": {
+      "id": "course_ui_systems",
+      "title": "Modern Interface Engineering & Design Systems",
+      "description": "Build accessible, high-contrast web interfaces with systematic typography, responsive grid math, and predictable component APIs.",
+      "thumbnailUrl": "/thumbnails/ui-engineering.svg",
+      "category": "Design Systems",
+      "courseType": "free",
+      "price": 0,
+      "isPublished": true,
+      "createdAt": "2026-10-11T09:00:00.000Z",
+      "updatedAt": "2026-10-15T11:00:00.000Z"
+    },
+    "course_cloud_architecture": {
+      "id": "course_cloud_architecture",
+      "title": "Full-Stack Cloud Architecture & Distributed Systems",
+      "description": "Architect resilient cloud-native services with containerized runtimes, distributed state management, and zero-downtime deployment pipelines.",
+      "thumbnailUrl": "/thumbnails/fullstack.svg",
+      "category": "Cloud Engineering",
+      "courseType": "paid",
+      "price": 89,
+      "isPublished": true,
+      "createdAt": "2026-10-12T09:00:00.000Z",
+      "updatedAt": "2026-10-16T08:00:00.000Z"
+    },
+    "course_db_security": {
+      "id": "course_db_security",
+      "title": "Database Security Modeling & Zero-Trust Access Control",
+      "description": "Design defense-in-depth security rules, relational invariants, and server-verified authorization gates for multi-tenant applications.",
+      "thumbnailUrl": "/thumbnails/database.svg",
+      "category": "Security & Data",
+      "courseType": "paid",
+      "price": 120,
+      "isPublished": true,
+      "createdAt": "2026-10-14T09:00:00.000Z",
+      "updatedAt": "2026-10-16T14:00:00.000Z"
+    }
+  },
+  "lessons": {
+    "lesson_ts_1": {
+      "id": "lesson_ts_1",
+      "courseId": "course_ts_fundamentals",
+      "title": "Foundations of Structural Typing & Compiler Flags",
+      "youtubeVideoId": "BwuLxPH8IDs",
+      "lessonOrder": 1,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_ts_2": {
+      "id": "lesson_ts_2",
+      "courseId": "course_ts_fundamentals",
+      "title": "Generics, Utility Types & Discriminated Unions",
+      "youtubeVideoId": "W6NZfCO5SIk",
+      "lessonOrder": 2,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_ts_3": {
+      "id": "lesson_ts_3",
+      "courseId": "course_ts_fundamentals",
+      "title": "End-to-End Type Safety Across API Boundaries",
+      "youtubeVideoId": "M7lc1UVf-VE",
+      "lessonOrder": 3,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_ui_1": {
+      "id": "lesson_ui_1",
+      "courseId": "course_ui_systems",
+      "title": "Typographic Hierarchy, Measure & Contrast Ratios",
+      "youtubeVideoId": "M7lc1UVf-VE",
+      "lessonOrder": 1,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_ui_2": {
+      "id": "lesson_ui_2",
+      "courseId": "course_ui_systems",
+      "title": "Composable Primitives & Accessible Keyboard Flows",
+      "youtubeVideoId": "W6NZfCO5SIk",
+      "lessonOrder": 2,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_ui_3": {
+      "id": "lesson_ui_3",
+      "courseId": "course_ui_systems",
+      "title": "Responsive Grid Architecture & Viewport Presence",
+      "youtubeVideoId": "BwuLxPH8IDs",
+      "lessonOrder": 3,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_cloud_1": {
+      "id": "lesson_cloud_1",
+      "courseId": "course_cloud_architecture",
+      "title": "Stateless Compute & Container Runtime Contracts",
+      "youtubeVideoId": "M7lc1UVf-VE",
+      "lessonOrder": 1,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_cloud_2": {
+      "id": "lesson_cloud_2",
+      "courseId": "course_cloud_architecture",
+      "title": "Distributed Consensus & Idempotent API Mutations",
+      "youtubeVideoId": "aircAruvnKk",
+      "lessonOrder": 2,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_cloud_3": {
+      "id": "lesson_cloud_3",
+      "courseId": "course_cloud_architecture",
+      "title": "Observability, Structured Logging & Health Probes",
+      "youtubeVideoId": "rfscVS0vtbw",
+      "lessonOrder": 3,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_cloud_4_draft": {
+      "id": "lesson_cloud_4_draft",
+      "courseId": "course_cloud_architecture",
+      "title": "Multi-Region Traffic Failover Drills (Unpublished Draft)",
+      "youtubeVideoId": "M7lc1UVf-VE",
+      "lessonOrder": 4,
+      "isPublished": false,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_sec_1": {
+      "id": "lesson_sec_1",
+      "courseId": "course_db_security",
+      "title": "Attribute-Based Access Control & Schema Validation",
+      "youtubeVideoId": "M7lc1UVf-VE",
+      "lessonOrder": 1,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    },
+    "lesson_sec_2": {
+      "id": "lesson_sec_2",
+      "courseId": "course_db_security",
+      "title": "Mitigating Privilege Escalation & Resource Poisoning",
+      "youtubeVideoId": "aircAruvnKk",
+      "lessonOrder": 2,
+      "isPublished": true,
+      "createdAt": "2026-10-15T10:00:00.000Z",
+      "updatedAt": "2026-10-15T10:00:00.000Z"
+    }
+  },
+  "enrollments": {
+    "student_alex_course_ts_fundamentals": {
+      "id": "student_alex_course_ts_fundamentals",
+      "userId": "student_alex",
+      "courseId": "course_ts_fundamentals",
+      "accessStatus": "active",
+      "enrolledAt": "2026-10-16T10:00:00.000Z",
+      "updatedAt": "2026-10-16T10:00:00.000Z"
+    },
+    "student_maya_course_cloud_architecture": {
+      "id": "student_maya_course_cloud_architecture",
+      "userId": "student_maya",
+      "courseId": "course_cloud_architecture",
+      "accessStatus": "active",
+      "enrolledAt": "2026-10-16T12:00:00.000Z",
+      "updatedAt": "2026-10-16T12:00:00.000Z"
+    }
+  },
+  "lessonProgress": {
+    "student_alex_lesson_ts_1": {
+      "id": "student_alex_lesson_ts_1",
+      "userId": "student_alex",
+      "courseId": "course_ts_fundamentals",
+      "lessonId": "lesson_ts_1",
+      "isCompleted": true,
+      "completedAt": "2026-10-16T11:30:00.000Z",
+      "updatedAt": "2026-10-16T11:30:00.000Z"
+    }
+  }
+}

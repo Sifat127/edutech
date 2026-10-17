@@ -1,0 +1,8 @@
+{
+  "name": "DIU EduTech",
+  "description": "A modern online learning platform for structured free and paid courses powered by YouTube Unlisted video lessons, Firebase Authentication, and Cloud Firestore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

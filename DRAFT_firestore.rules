@@ -1,0 +1,347 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // 1. GLOBAL SAFETY NET (Default Deny)
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 2. HARDENED PRIMITIVE HELPERS
+    // =========================================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'shefatahmed5959@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function hasActiveEnrollment(userId, courseId) {
+      return exists(/databases/$(database)/documents/enrollments/$(userId + '_' + courseId)) &&
+        get(/databases/$(database)/documents/enrollments/$(userId + '_' + courseId)).data.accessStatus == 'active';
+    }
+
+    // =========================================================================
+    // 3. ENTITY VALIDATION BLUEPRINTS
+    // =========================================================================
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'role', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'email', 'role', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
+        (data.role == 'student' || data.role == 'admin') &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAdmin(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'createdAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidCourse(data) {
+      return data.keys().hasAll(['id', 'title', 'description', 'thumbnailUrl', 'category', 'courseType', 'price', 'isPublished', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'title', 'description', 'thumbnailUrl', 'category', 'courseType', 'price', 'isPublished', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.description is string && data.description.size() >= 1 && data.description.size() <= 5000 &&
+        data.thumbnailUrl is string && data.thumbnailUrl.size() >= 1 && data.thumbnailUrl.size() <= 500 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 80 &&
+        (data.courseType == 'free' || data.courseType == 'paid') &&
+        data.price is number &&
+        ((data.courseType == 'free' && data.price == 0) || (data.courseType == 'paid' && data.price >= 0 && data.price <= 100000)) &&
+        data.isPublished is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLesson(data) {
+      return data.keys().hasAll(['id', 'courseId', 'title', 'youtubeVideoId', 'lessonOrder', 'isPublished', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'courseId', 'title', 'youtubeVideoId', 'lessonOrder', 'isPublished', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.courseId) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.youtubeVideoId is string && data.youtubeVideoId.size() == 11 && data.youtubeVideoId.matches('^[a-zA-Z0-9_\\-]{11}$') &&
+        data.lessonOrder is number && data.lessonOrder >= 1 && data.lessonOrder <= 10000 &&
+        data.isPublished is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEnrollment(data) {
+      return data.keys().hasAll(['id', 'userId', 'courseId', 'accessStatus', 'enrolledAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'courseId', 'accessStatus', 'enrolledAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        isValidId(data.courseId) &&
+        data.id == data.userId + '_' + data.courseId &&
+        (data.accessStatus == 'active' || data.accessStatus == 'revoked' || data.accessStatus == 'pending') &&
+        data.enrolledAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLessonProgress(data) {
+      return data.keys().hasAll(['id', 'userId', 'courseId', 'lessonId', 'isCompleted', 'completedAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'userId', 'courseId', 'lessonId', 'isCompleted', 'completedAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.userId) &&
+        isValidId(data.courseId) &&
+        isValidId(data.lessonId) &&
+        data.id == data.userId + '_' + data.lessonId &&
+        data.isCompleted is bool &&
+        data.completedAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // 4. COLLECTION RULES (Ordered: Auth -> Static Validation -> Relational DB)
+    // =========================================================================
+
+    // Connection health check endpoint (denied by default, safe for offline check)
+    match /test/{docId} {
+      allow read, write: if false;
+    }
+
+    // Users collection (PII isolated to owner or admin)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidUser(incoming()) &&
+        incoming().uid == userId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          (isOwner(userId) && incoming().role == 'student') ||
+          isAdmin()
+        );
+
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidUser(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          (isOwner(userId) &&
+            incoming().role == existing().role &&
+            incoming().email == existing().email &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])) ||
+          isAdmin()
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(userId) && isAdmin();
+    }
+
+    // Trusted Admin collection
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+
+      allow create: if isVerifiedUser() &&
+        isValidId(adminId) &&
+        isValidAdmin(incoming()) &&
+        incoming().uid == adminId &&
+        incoming().createdAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(adminId) &&
+        isValidAdmin(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email']) &&
+        isAdmin();
+
+      allow delete: if isVerifiedUser() && isValidId(adminId) && isAdmin();
+    }
+
+    // Courses collection
+    match /courses/{courseId} {
+      allow get: if isValidId(courseId) && (existing().isPublished == true || isAdmin());
+      allow list: if resource.data.isPublished == true || isAdmin();
+
+      allow create: if isVerifiedUser() &&
+        isValidId(courseId) &&
+        isValidCourse(incoming()) &&
+        incoming().id == courseId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(courseId) &&
+        isValidCourse(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title',
+          'description',
+          'thumbnailUrl',
+          'category',
+          'courseType',
+          'price',
+          'isPublished',
+          'updatedAt'
+        ]) &&
+        isAdmin();
+
+      allow delete: if isVerifiedUser() && isValidId(courseId) && isAdmin();
+    }
+
+    // Lessons collection (Protected YouTube video IDs)
+    match /lessons/{lessonId} {
+      allow get: if isSignedIn() && isValidId(lessonId) && (
+        isAdmin() || (
+          existing().isPublished == true &&
+          exists(/databases/$(database)/documents/courses/$(existing().courseId)) &&
+          get(/databases/$(database)/documents/courses/$(existing().courseId)).data.isPublished == true &&
+          hasActiveEnrollment(request.auth.uid, existing().courseId)
+        )
+      );
+
+      allow list: if isSignedIn() && isAdmin();
+
+      allow create: if isVerifiedUser() &&
+        isValidId(lessonId) &&
+        isValidLesson(incoming()) &&
+        incoming().id == lessonId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        exists(/databases/$(database)/documents/courses/$(incoming().courseId));
+
+      allow update: if isVerifiedUser() &&
+        isValidId(lessonId) &&
+        isValidLesson(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().courseId == existing().courseId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title',
+          'youtubeVideoId',
+          'lessonOrder',
+          'isPublished',
+          'updatedAt'
+        ]) &&
+        isAdmin();
+
+      allow delete: if isVerifiedUser() && isValidId(lessonId) && isAdmin();
+    }
+
+    // Enrollments collection (Document ID is {userId}_{courseId})
+    match /enrollments/{enrollmentId} {
+      allow get: if isSignedIn() && isValidId(enrollmentId) && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+
+      allow create: if isVerifiedUser() &&
+        isValidId(enrollmentId) &&
+        isValidEnrollment(incoming()) &&
+        incoming().id == enrollmentId &&
+        incoming().enrolledAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/courses/$(incoming().courseId)) && (
+          isAdmin() || (
+            incoming().userId == request.auth.uid &&
+            incoming().accessStatus == 'active' &&
+            get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.isPublished == true &&
+            get(/databases/$(database)/documents/courses/$(incoming().courseId)).data.courseType == 'free'
+          )
+        );
+
+      allow update: if isVerifiedUser() &&
+        isValidId(enrollmentId) &&
+        isValidEnrollment(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().courseId == existing().courseId &&
+        incoming().enrolledAt == existing().enrolledAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['accessStatus', 'updatedAt']) &&
+        isAdmin();
+
+      allow delete: if isVerifiedUser() && isValidId(enrollmentId) && isAdmin();
+    }
+
+    // Lesson Progress collection (Document ID is {userId}_{lessonId})
+    match /lessonProgress/{progressId} {
+      allow get: if isSignedIn() && isValidId(progressId) && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+
+      allow create: if isVerifiedUser() &&
+        isValidId(progressId) &&
+        isValidLessonProgress(incoming()) &&
+        incoming().id == progressId &&
+        incoming().completedAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/courses/$(incoming().courseId)) &&
+        exists(/databases/$(database)/documents/lessons/$(incoming().lessonId)) && (
+          isAdmin() || (
+            incoming().userId == request.auth.uid &&
+            hasActiveEnrollment(request.auth.uid, incoming().courseId)
+          )
+        );
+
+      allow update: if isVerifiedUser() &&
+        isValidId(progressId) &&
+        isValidLessonProgress(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().userId == existing().userId &&
+        incoming().courseId == existing().courseId &&
+        incoming().lessonId == existing().lessonId &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['isCompleted', 'completedAt', 'updatedAt']) && (
+          isAdmin() || (
+            existing().userId == request.auth.uid &&
+            hasActiveEnrollment(request.auth.uid, existing().courseId)
+          )
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(progressId) && isAdmin();
+    }
+  }
+}
