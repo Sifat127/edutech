@@ -536,9 +536,11 @@ function CourseLearningContent() {
                 </div>
               ) : (
                 <>
-                  {/* Full-Iframe Transparent Interaction Shield (z-[100]): Blocks all clicks, hovers, and native YouTube buttons inside the video */}
+                  {/* Granular Corner Transparent Overlays (z-[100]): Specifically target and disable the YouTube title/channel link, Share button, 'Watch on YouTube' link, and YouTube logo in the iframe corners */}
+                  {/* Top-Left Corner Overlay: Disables YouTube channel avatar & title link */}
                   <div
                     aria-hidden="true"
+                    data-testid="yt-corner-overlay-top-left"
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -559,7 +561,88 @@ function CourseLearningContent() {
                       e.preventDefault();
                       e.stopPropagation();
                     }}
-                    className="absolute inset-0 z-[100] bg-transparent pointer-events-auto cursor-default select-none"
+                    className="absolute top-0 left-0 w-72 sm:w-80 h-20 z-[100] bg-transparent pointer-events-auto cursor-default select-none"
+                  />
+
+                  {/* Top-Right Corner Overlay: Disables YouTube Share & Watch Later buttons */}
+                  <div
+                    aria-hidden="true"
+                    data-testid="yt-corner-overlay-top-right"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    className="absolute top-0 right-0 w-48 sm:w-56 h-20 z-[100] bg-transparent pointer-events-auto cursor-default select-none"
+                  />
+
+                  {/* Bottom-Left Corner Overlay: Disables 'Watch on YouTube' link/badge */}
+                  <div
+                    aria-hidden="true"
+                    data-testid="yt-corner-overlay-bottom-left"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    className="absolute bottom-0 left-0 w-60 sm:w-72 h-28 z-[100] bg-transparent pointer-events-auto cursor-default select-none"
+                  />
+
+                  {/* Bottom-Right Corner Overlay: Disables YouTube logo & watermark */}
+                  <div
+                    aria-hidden="true"
+                    data-testid="yt-corner-overlay-bottom-right"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    className="absolute bottom-0 right-0 w-44 sm:w-52 h-28 z-[100] bg-transparent pointer-events-auto cursor-default select-none"
                   />
 
                   {/* Top Full-Width Shield: Covers the entire YouTube title bar and blocks the top-right Volume/CC/Settings buttons */}
@@ -715,7 +798,7 @@ function CourseLearningContent() {
                 referrerPolicy="strict-origin-when-cross-origin"
                 allowFullScreen
                 tabIndex={-1}
-                className="w-full h-full border-0 pointer-events-none select-none"
+                className="w-full h-full border-0 select-none"
               />
             </div>
 
