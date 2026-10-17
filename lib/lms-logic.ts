@@ -344,31 +344,98 @@ export function computeSeekOffset(
   return Math.max(0, Math.min(maxTime, Math.round(rawTarget * 100) / 100));
 }
 
+export interface YouTubePlayerCommand {
+  func: string;
+  args: unknown[];
+}
+
+/**
+ * Generates the ordered sequence of YouTube IFrame Player API commands required
+ * to unlock and apply a target video resolution (e.g. 1080p 'hd1080' or 720p 'hd720')
+ * without getting locked at 480p ('large').
+ */
+export function buildYouTubeQualityCommands(
+  quality: VideoQualityCode,
+  options?: {
+    videoId?: string;
+    startSeconds?: number;
+    reloadStream?: boolean;
+    isPaused?: boolean;
+  }
+): YouTubePlayerCommand[] {
+  const dims = getQualityTargetDimensions(quality);
+  const effectiveQuality: VideoQualityCode = quality === 'default' ? 'hd1080' : quality;
+  const rangeArgs =
+    quality === 'default' ? ['hd720', 'hd1080'] : [effectiveQuality, effectiveQuality];
+
+  const commands: YouTubePlayerCommand[] = [
+    { func: 'setSize', args: [dims.width, dims.height] },
+    { func: 'setPlaybackQualityRange', args: rangeArgs },
+    { func: 'setPlaybackQuality', args: [effectiveQuality] },
+  ];
+
+  if (options?.reloadStream && options.videoId && YOUTUBE_ID_REGEX.test(options.videoId)) {
+    const safeStart =
+      typeof options.startSeconds === 'number' &&
+      Number.isFinite(options.startSeconds) &&
+      options.startSeconds > 0
+        ? Math.floor(options.startSeconds)
+        : 0;
+    const loaderFunc = options.isPaused ? 'cueVideoById' : 'loadVideoById';
+    commands.push({
+      func: loaderFunc,
+      args: [
+        {
+          videoId: options.videoId,
+          startSeconds: safeStart,
+          suggestedQuality: effectiveQuality,
+        },
+      ],
+    });
+    commands.push({ func: 'setPlaybackQualityRange', args: rangeArgs });
+    commands.push({ func: 'setPlaybackQuality', args: [effectiveQuality] });
+  }
+
+  return commands;
+}
+
 /**
  * Generates the official YouTube embed URL from a validated 11-character video ID.
  */
 export function buildYouTubeEmbedUrl(
   videoId: string,
-  options?: { autoplay?: boolean; cc?: boolean; vq?: VideoQualityCode; start?: number }
+  options?: {
+    autoplay?: boolean;
+    cc?: boolean;
+    vq?: VideoQualityCode;
+    start?: number;
+    origin?: string;
+  }
 ): string {
   if (!YOUTUBE_ID_REGEX.test(videoId)) {
     throw new Error('Invalid YouTube video ID');
   }
-  if (options?.autoplay) {
-    const ccParam = options.cc ? '&cc_load_policy=1' : '';
-    const vqParam =
-      options.vq && options.vq !== 'default' ? `&vq=${encodeURIComponent(options.vq)}` : '';
-    const hdParam =
-      !options.vq || options.vq === 'hd1080' || options.vq === 'hd720' || options.vq === 'default'
-        ? '&hd=1'
-        : '';
-    const startParam =
-      typeof options.start === 'number' && options.start > 0
-        ? `&start=${Math.floor(options.start)}`
-        : '';
-    return `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1&enablejsapi=1&autoplay=1${hdParam}${ccParam}${vqParam}${startParam}`;
+  if (!options) {
+    return `https://www.youtube.com/embed/${videoId}?rel=0`;
   }
-  return `https://www.youtube.com/embed/${videoId}?rel=0`;
+
+  const effectiveVq: VideoQualityCode =
+    options.vq && options.vq !== 'default' ? options.vq : 'hd1080';
+  const isHd = effectiveVq === 'hd1080' || effectiveVq === 'hd720';
+  const hdParam = `&hd=${isHd ? '1' : '0'}`;
+  const ccParam = options.cc ? '&cc_load_policy=1' : '';
+  const vqParam = `&vq=${encodeURIComponent(effectiveVq)}`;
+  const startParam =
+    typeof options.start === 'number' && options.start > 0
+      ? `&start=${Math.floor(options.start)}`
+      : '';
+  const originParam =
+    options.origin && options.origin.trim().length > 0
+      ? `&origin=${encodeURIComponent(options.origin.trim())}&widget_referrer=${encodeURIComponent(options.origin.trim())}`
+      : '';
+  const autoplayVal = options.autoplay ? '1' : '0';
+
+  return `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1&enablejsapi=1&widgetid=1&autoplay=${autoplayVal}${hdParam}${ccParam}${vqParam}${startParam}${originParam}`;
 }
 
 export interface CourseInputPayload {

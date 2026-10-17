@@ -36,6 +36,7 @@ import {
 } from '@/lib/lms-client';
 import {
   buildYouTubeEmbedUrl,
+  buildYouTubeQualityCommands,
   clampVolume,
   computeSeekOffset,
   getQualityShortLabel,
@@ -46,6 +47,41 @@ import {
   type Lesson,
   type VideoQualityCode,
 } from '@/lib/lms-logic';
+
+interface YTPlayerInstance {
+  setSize?: (width: number, height: number) => void;
+  setPlaybackQualityRange?: (minQuality: string, maxQuality?: string) => void;
+  setPlaybackQuality?: (suggestedQuality: string) => void;
+  loadVideoById?: (opts: {
+    videoId: string;
+    startSeconds?: number;
+    suggestedQuality?: string;
+  }) => void;
+  cueVideoById?: (opts: {
+    videoId: string;
+    startSeconds?: number;
+    suggestedQuality?: string;
+  }) => void;
+  destroy?: () => void;
+}
+
+declare global {
+  interface Window {
+    YT?: {
+      Player?: new (
+        element: HTMLIFrameElement | string,
+        options?: {
+          events?: {
+            onReady?: () => void;
+            onStateChange?: (event: { data: number }) => void;
+            onPlaybackQualityChange?: (event: { data: string }) => void;
+          };
+        }
+      ) => YTPlayerInstance;
+    };
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
 
 function CourseLearningContent() {
   const params = useParams<{ courseId: string }>();
@@ -72,6 +108,7 @@ function CourseLearningContent() {
   const [previousVolume, setPreviousVolume] = useState<number>(100);
   const [volumeInputText, setVolumeInputText] = useState<string>('100');
   const [videoQuality, setVideoQuality] = useState<VideoQualityCode>('hd1080');
+  const [initialStreamQuality, setInitialStreamQuality] = useState<VideoQualityCode>('hd1080');
   const [qualityMenuOpen, setQualityMenuOpen] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
@@ -80,17 +117,21 @@ function CourseLearningContent() {
   const [isDraggingSeek, setIsDraggingSeek] = useState<boolean>(false);
   const [hudFeedback, setHudFeedback] = useState<string | null>(null);
   const [hudFeedbackKey, setHudFeedbackKey] = useState<number>(0);
+  const [hostOrigin, setHostOrigin] = useState<string>('');
   const [playerSize, setPlayerSize] = useState<{ width: number; height: number }>({
-    width: 0,
-    height: 0,
+    width: 854,
+    height: 480,
   });
 
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
+  const ytPlayerReadyRef = useRef<boolean>(false);
   const qualityMenuRef = useRef<HTMLDivElement | null>(null);
   const isDraggingSeekRef = useRef<boolean>(false);
   const seekUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastQualityEnforceTimeRef = useRef<number>(0);
 
   const currentTimeRef = useRef<number>(0);
   const durationRef = useRef<number>(0);
@@ -160,6 +201,19 @@ function CourseLearningContent() {
     return () => window.removeEventListener('resize', updateDimensions);
   }, [loading, accessDeniedReason, currentLessonId]);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setHostOrigin(window.location.origin);
+      if (!document.getElementById('youtube-iframe-js-api')) {
+        const script = document.createElement('script');
+        script.id = 'youtube-iframe-js-api';
+        script.src = 'https://www.youtube.com/iframe_api';
+        script.async = true;
+        document.head.appendChild(script);
+      }
+    }
+  }, []);
+
   const showHudFeedback = useCallback((label: string) => {
     setHudFeedback(label);
     setHudFeedbackKey((prev) => prev + 1);
@@ -174,64 +228,122 @@ function CourseLearningContent() {
   const sendPlayerCommand = useCallback((func: string, args: unknown[] = []) => {
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
-    win.postMessage(JSON.stringify({ event: 'command', func, args }), '*');
+    win.postMessage(
+      JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }),
+      '*'
+    );
   }, []);
 
   const enforceVideoQuality = useCallback(
-    (q: VideoQualityCode) => {
-      if (q === 'default') {
-        sendPlayerCommand('setPlaybackQualityRange', ['default', 'hd1080']);
-        sendPlayerCommand('setPlaybackQuality', ['hd1080']);
-      } else {
-        sendPlayerCommand('setPlaybackQualityRange', [q, q]);
-        sendPlayerCommand('setPlaybackQuality', [q]);
+    (
+      q: VideoQualityCode,
+      options?: {
+        videoId?: string;
+        startSeconds?: number;
+        reloadStream?: boolean;
+        isPaused?: boolean;
+        force?: boolean;
+      }
+    ) => {
+      const now = Date.now();
+      if (!options?.force && !options?.reloadStream && now - lastQualityEnforceTimeRef.current < 2500) {
+        return;
+      }
+      lastQualityEnforceTimeRef.current = now;
+
+      const commands = buildYouTubeQualityCommands(q, options);
+      for (const cmd of commands) {
+        sendPlayerCommand(cmd.func, cmd.args);
+      }
+
+      const player = ytPlayerRef.current;
+      if (player && ytPlayerReadyRef.current) {
+        const dims = getQualityTargetDimensions(q);
+        const effectiveQ = q === 'default' ? 'hd1080' : q;
+        try {
+          player.setSize?.(dims.width, dims.height);
+          if (q === 'default') {
+            player.setPlaybackQualityRange?.('hd720', 'hd1080');
+          } else {
+            player.setPlaybackQualityRange?.(effectiveQ, effectiveQ);
+          }
+          player.setPlaybackQuality?.(effectiveQ);
+        } catch {
+          // Ignore if player proxy is still initializing
+        }
       }
     },
     [sendPlayerCommand]
   );
 
-  const syncPlayerPreferences = useCallback(() => {
-    const targetVol = isMutedRef.current ? 0 : volumeRef.current;
-    sendPlayerCommand('setVolume', [targetVol]);
-    if (isMutedRef.current || targetVol === 0) {
-      sendPlayerCommand('mute');
-    } else {
-      sendPlayerCommand('unMute');
-    }
-    sendPlayerCommand('setPlaybackRate', [playbackSpeedRef.current]);
-    enforceVideoQuality(videoQualityRef.current);
-  }, [enforceVideoQuality, sendPlayerCommand]);
+  const syncPlayerPreferences = useCallback(
+    (forceQuality = false) => {
+      const targetVol = isMutedRef.current ? 0 : volumeRef.current;
+      sendPlayerCommand('setVolume', [targetVol]);
+      if (isMutedRef.current || targetVol === 0) {
+        sendPlayerCommand('mute');
+      } else {
+        sendPlayerCommand('unMute');
+      }
+      sendPlayerCommand('setPlaybackRate', [playbackSpeedRef.current]);
+      enforceVideoQuality(videoQualityRef.current, { force: forceQuality });
+    },
+    [enforceVideoQuality, sendPlayerCommand]
+  );
 
   const registerIframeListeners = useCallback(() => {
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
-    win.postMessage(
-      JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onReady'] }),
-      '*'
-    );
-    win.postMessage(
-      JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }),
-      '*'
-    );
-    win.postMessage(
-      JSON.stringify({
-        event: 'command',
-        func: 'addEventListener',
-        args: ['onPlaybackQualityChange'],
-      }),
-      '*'
-    );
-  }, []);
+    const events = ['onReady', 'onStateChange', 'onPlaybackQualityChange'];
+    for (const evt of events) {
+      win.postMessage(
+        JSON.stringify({
+          event: 'command',
+          func: 'addEventListener',
+          args: [evt],
+          id: 1,
+          channel: 'widget',
+        }),
+        '*'
+      );
+    }
+
+    if (iframeRef.current && window.YT?.Player && !ytPlayerRef.current) {
+      try {
+        ytPlayerReadyRef.current = false;
+        ytPlayerRef.current = new window.YT.Player(iframeRef.current, {
+          events: {
+            onReady: () => {
+              ytPlayerReadyRef.current = true;
+              syncPlayerPreferences(true);
+            },
+            onStateChange: (evt) => {
+              if (evt.data === 1 || evt.data === 3 || evt.data === 5) {
+                enforceVideoQuality(videoQualityRef.current);
+              }
+            },
+            onPlaybackQualityChange: (evt) => {
+              const targetQ = videoQualityRef.current;
+              if (targetQ !== 'default' && evt.data && evt.data !== targetQ) {
+                enforceVideoQuality(targetQ);
+              }
+            },
+          },
+        });
+      } catch {
+        // Fallback to postMessage widget bridge
+      }
+    }
+  }, [enforceVideoQuality, syncPlayerPreferences]);
 
   useEffect(() => {
     if (!isPlayingLesson) return;
     const interval = setInterval(() => {
       registerIframeListeners();
-      enforceVideoQuality(videoQualityRef.current);
-    }, 1000);
+    }, 1500);
     return () => clearInterval(interval);
-  }, [enforceVideoQuality, isPlayingLesson, registerIframeListeners]);
+  }, [isPlayingLesson, registerIframeListeners]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -247,13 +359,14 @@ function CourseLearningContent() {
                 duration?: number;
                 playerState?: number;
                 playbackQuality?: string;
+                availableQualityLevels?: string[];
               };
         };
         if (data.event === 'onReady') {
-          syncPlayerPreferences();
+          syncPlayerPreferences(true);
         }
         if (data.event === 'onStateChange') {
-          if (data.info === 1 || data.info === 3 || data.info === -1) {
+          if (data.info === 1 || data.info === 3 || data.info === 5 || data.info === -1) {
             enforceVideoQuality(videoQualityRef.current);
           }
         }
@@ -274,11 +387,8 @@ function CourseLearningContent() {
           }
           if (data.info.playerState === 1) {
             setIsPaused(false);
-            enforceVideoQuality(videoQualityRef.current);
           } else if (data.info.playerState === 2) {
             setIsPaused(true);
-          } else if (data.info.playerState === 3) {
-            enforceVideoQuality(videoQualityRef.current);
           }
           if (
             typeof data.info.playbackQuality === 'string' &&
@@ -595,13 +705,21 @@ function CourseLearningContent() {
     setVideoQuality(code);
     videoQualityRef.current = code;
     setQualityMenuOpen(false);
-    enforceVideoQuality(code);
-    if (isPlayingLessonRef.current) {
+    if (!isPlayingLessonRef.current) {
+      setInitialStreamQuality(code);
+      enforceVideoQuality(code, { force: true });
+    } else {
       const resumeAt = currentTimeRef.current;
-      // Flush pre-buffered lower-resolution segments so the new resolution loads immediately
-      sendPlayerCommand('seekTo', [resumeAt, true]);
-      setTimeout(() => enforceVideoQuality(code), 150);
-      setTimeout(() => enforceVideoQuality(code), 450);
+      enforceVideoQuality(code, {
+        videoId: currentLesson?.youtubeVideoId,
+        startSeconds: resumeAt,
+        reloadStream: true,
+        isPaused: isPausedRef.current,
+        force: true,
+      });
+      setTimeout(() => {
+        enforceVideoQuality(code, { force: true });
+      }, 350);
     }
     const label = getQualityShortLabel(code);
     showHudFeedback(`Quality: ${label}`);
@@ -1284,50 +1402,44 @@ function CourseLearningContent() {
 
               {(() => {
                 const targetDims = getQualityTargetDimensions(videoQuality);
-                const hasMeasuredSize = playerSize.width > 0 && playerSize.height > 0;
+                const containerW = playerSize.width > 0 ? playerSize.width : 854;
+                const containerH = playerSize.height > 0 ? playerSize.height : 480;
                 return (
                   <div className="absolute inset-0 overflow-hidden">
                     <iframe
                       ref={iframeRef}
                       width={targetDims.width}
                       height={targetDims.height}
+                      data-selected-quality={videoQuality}
+                      data-target-resolution={`${targetDims.width}x${targetDims.height}`}
                       onLoad={() => {
+                        ytPlayerRef.current = null;
+                        ytPlayerReadyRef.current = false;
                         registerIframeListeners();
-                        syncPlayerPreferences();
+                        syncPlayerPreferences(true);
                         setTimeout(() => {
                           registerIframeListeners();
-                          syncPlayerPreferences();
-                        }, 500);
-                        setTimeout(() => {
-                          registerIframeListeners();
-                          syncPlayerPreferences();
-                        }, 1200);
+                          syncPlayerPreferences(true);
+                        }, 450);
                       }}
                       key={`${currentLesson.youtubeVideoId}_${isPlayingLesson ? 'play' : 'idle'}`}
                       src={buildYouTubeEmbedUrl(currentLesson.youtubeVideoId, {
                         autoplay: isPlayingLesson,
-                        vq: 'hd1080',
+                        vq: initialStreamQuality,
+                        origin: hostOrigin,
                       })}
                       title={currentLesson.title}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allow="accelerometer; autoplay; clipboard-write; compute-pressure; encrypted-media; gyroscope; picture-in-picture"
                       referrerPolicy="strict-origin-when-cross-origin"
                       allowFullScreen
                       tabIndex={-1}
-                      style={
-                        hasMeasuredSize
-                          ? {
-                              width: `${targetDims.width}px`,
-                              height: `${targetDims.height}px`,
-                              transform: `scale(${playerSize.width / targetDims.width}, ${playerSize.height / targetDims.height})`,
-                              transformOrigin: 'top left',
-                            }
-                          : undefined
-                      }
-                      className={
-                        hasMeasuredSize
-                          ? 'border-0 select-none block'
-                          : 'w-full h-full border-0 select-none block'
-                      }
+                      style={{
+                        width: `${targetDims.width}px`,
+                        height: `${targetDims.height}px`,
+                        transform: `scale(${containerW / targetDims.width}, ${containerH / targetDims.height})`,
+                        transformOrigin: 'top left',
+                      }}
+                      className="border-0 select-none block"
                     />
                   </div>
                 );

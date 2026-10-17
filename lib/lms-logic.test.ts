@@ -20,6 +20,7 @@ import {
   computeSeekOffset,
   getQualityShortLabel,
   getQualityTargetDimensions,
+  buildYouTubeQualityCommands,
   isValidVideoQualityCode,
   YOUTUBE_QUALITY_OPTIONS,
   type Course,
@@ -419,13 +420,17 @@ test('video quality helpers validate quality codes and buildYouTubeEmbedUrl incl
   assert.equal(getQualityShortLabel('hd720'), '720p');
   assert.equal(getQualityShortLabel('default'), 'Auto');
 
-  const urlWithQuality = buildYouTubeEmbedUrl('M7lc1UVf-VE', {
+  const urlWithQuality = buildYouTubeEmbedUrl('BwuLxPH8IDs', {
     autoplay: true,
     vq: 'hd1080',
     start: 130,
+    origin: 'http://localhost:3000',
   });
   assert.equal(urlWithQuality.includes('vq=hd1080'), true);
   assert.equal(urlWithQuality.includes('hd=1'), true);
+  assert.equal(urlWithQuality.includes('enablejsapi=1'), true);
+  assert.equal(urlWithQuality.includes('widgetid=1'), true);
+  assert.equal(urlWithQuality.includes('origin=http%3A%2F%2Flocalhost%3A3000'), true);
   assert.equal(urlWithQuality.includes('start=130'), true);
 
   assert.deepEqual(getQualityTargetDimensions('hd1080'), { width: 1920, height: 1080 });
@@ -434,4 +439,21 @@ test('video quality helpers validate quality codes and buildYouTubeEmbedUrl incl
   assert.deepEqual(getQualityTargetDimensions('large'), { width: 854, height: 480 });
   assert.deepEqual(getQualityTargetDimensions('medium'), { width: 640, height: 360 });
   assert.deepEqual(getQualityTargetDimensions('small'), { width: 426, height: 240 });
+
+  const commands1080 = buildYouTubeQualityCommands('hd1080', {
+    videoId: 'BwuLxPH8IDs',
+    startSeconds: 42.8,
+    reloadStream: true,
+    isPaused: false,
+  });
+  assert.deepEqual(commands1080[0], { func: 'setSize', args: [1920, 1080] });
+  assert.deepEqual(commands1080[1], {
+    func: 'setPlaybackQualityRange',
+    args: ['hd1080', 'hd1080'],
+  });
+  assert.deepEqual(commands1080[2], { func: 'setPlaybackQuality', args: ['hd1080'] });
+  assert.deepEqual(commands1080[3], {
+    func: 'loadVideoById',
+    args: [{ videoId: 'BwuLxPH8IDs', startSeconds: 42, suggestedQuality: 'hd1080' }],
+  });
 });
