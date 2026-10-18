@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateRequest, readDb, writeDb } from '@/lib/server-db';
+import { authenticateRequest, readDbAsync, writeDbAsync } from '@/lib/server-db';
 import {
   canEnrollInFreeCourse,
   generateSecretCode,
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
 
     const url = new URL(request.url);
     const allParam = url.searchParams.get('all') === '1';
-    const db = readDb();
+    const db = await readDbAsync();
 
     if (allParam && caller.role === 'admin') {
       const enrollments = Object.values(db.enrollments).sort((a, b) =>
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'A valid courseId is required.' }, { status: 400 });
     }
 
-    const db = readDb();
+    const db = await readDbAsync();
     const course = db.courses[courseId] ?? null;
     if (!course) {
       return NextResponse.json({ error: 'Course not found.' }, { status: 404 });
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
       };
 
       db.enrollments[enrollmentId] = updated;
-      writeDb(db);
+      await writeDbAsync(db);
 
       return NextResponse.json(
         { enrollment: updated },
@@ -144,7 +144,7 @@ export async function POST(request: Request) {
     };
 
     db.enrollments[enrollmentId] = newEnrollment;
-    writeDb(db);
+    await writeDbAsync(db);
 
     return NextResponse.json({ enrollment: newEnrollment }, { status: 201 });
   } catch {

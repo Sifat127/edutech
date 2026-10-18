@@ -22,6 +22,7 @@ import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { CourseCard } from '@/components/course-card';
 import { CourseProgressBar } from '@/components/course-progress-bar';
+import { CourseCompletionTrendsChart } from '@/components/course-completion-trends-chart';
 import { BkashCheckoutModal } from '@/components/bkash-checkout-modal';
 import { useLms } from '@/components/lms-provider';
 import { updateUserDisplayName, type EnrichedCourse } from '@/lib/lms-client';
@@ -537,6 +538,9 @@ function StudentDashboardContent() {
                   </div>
                 )}
               </div>
+
+              {/* Visual 30-Day Course Completion Trends Chart using Recharts */}
+              <CourseCompletionTrendsChart progressRecords={progressRecords} />
 
               {/* Recently Completed Lessons */}
               <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">

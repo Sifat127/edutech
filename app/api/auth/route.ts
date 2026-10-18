@@ -4,11 +4,14 @@ import {
   createSessionToken,
   hashPassword,
   readDb,
+  readDbAsync,
   toPublicUserProfile,
   verifyPassword,
   writeDb,
+  writeDbAsync,
 } from '@/lib/server-db';
 import { BOOTSTRAP_ADMIN_EMAIL } from '@/lib/lms-logic';
+import firebaseConfig from '@/firebase-applet-config.json';
 
 export async function GET(request: Request) {
   try {
@@ -26,7 +29,7 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const action = typeof body.action === 'string' ? body.action : '';
-    const db = readDb();
+    const db = await readDbAsync();
     const now = new Date().toISOString();
 
     if (action === 'firebase-sync') {
@@ -90,7 +93,7 @@ export async function POST(request: Request) {
       };
 
       db.users[uid] = newUser;
-      writeDb(db);
+      await writeDbAsync(db);
 
       const publicUser = toPublicUserProfile(newUser);
       const token = createSessionToken({ uid: publicUser.uid, email: publicUser.email });
@@ -105,8 +108,46 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Email and password are required.' }, { status: 400 });
       }
 
-      const userRecord = Object.values(db.users).find((u) => u.email.toLowerCase() === email);
-      if (!userRecord || !verifyPassword(password, userRecord.passwordHash, userRecord.passwordSalt)) {
+      let userRecord = Object.values(db.users).find((u) => u.email.toLowerCase() === email);
+      let isValid = userRecord && verifyPassword(password, userRecord.passwordHash, userRecord.passwordSalt);
+
+      // If missing from local /tmp on Vercel cold starts, verify via Firebase Auth Identity Toolkit!
+      if (!isValid) {
+        try {
+          const fbRes = await fetch(
+            `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email, password, returnSecureToken: true }),
+            }
+          );
+          if (fbRes.ok) {
+            const fbData = (await fbRes.json()) as { localId: string; displayName?: string };
+            const uid = fbData.localId.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const isBootstrap =
+              email === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() || email === 'admin@lumina.edu';
+            const { hash, salt } = hashPassword(password);
+            userRecord = {
+              uid,
+              displayName: fbData.displayName || email.split('@')[0] || 'Student',
+              email,
+              role: isBootstrap ? ('admin' as const) : ('student' as const),
+              createdAt: now,
+              updatedAt: now,
+              passwordHash: hash,
+              passwordSalt: salt,
+            };
+            db.users[uid] = userRecord;
+            await writeDbAsync(db);
+            isValid = true;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!userRecord || !isValid) {
         return NextResponse.json({ error: 'Invalid email or password.' }, { status: 401 });
       }
 
@@ -124,7 +165,7 @@ export async function POST(request: Request) {
       const userRecord = Object.values(db.users).find((u) => u.email.toLowerCase() === email);
       if (userRecord) {
         userRecord.resetRequestedAt = now;
-        writeDb(db);
+        await writeDbAsync(db);
       }
 
       return NextResponse.json(
@@ -164,7 +205,7 @@ export async function POST(request: Request) {
 
       record.displayName = displayName;
       record.updatedAt = now;
-      writeDb(db);
+      await writeDbAsync(db);
 
       return NextResponse.json({ user: toPublicUserProfile(record) }, { status: 200 });
     }

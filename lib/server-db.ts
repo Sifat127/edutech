@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
   BOOTSTRAP_ADMIN_EMAIL,
@@ -450,6 +453,115 @@ function backfillEnrollments(db: DatabaseSchema): boolean {
   return mutated;
 }
 
+const serverFirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+const serverAuth = getAuth(serverFirebaseApp);
+const serverFirestore = getFirestore(serverFirebaseApp, firebaseConfig.firestoreDatabaseId);
+
+let isServerAuthenticated = false;
+let authPromise: Promise<boolean> | null = null;
+
+async function ensureServerAuth(): Promise<boolean> {
+  if (isServerAuthenticated && serverAuth.currentUser) return true;
+  if (authPromise) return authPromise;
+
+  authPromise = (async () => {
+    try {
+      await signInWithEmailAndPassword(serverAuth, 'admin@lumina.edu', 'AdminPass123!');
+      isServerAuthenticated = true;
+      return true;
+    } catch (err) {
+      console.warn('Server Firebase Auth sign-in warning:', err);
+      return false;
+    } finally {
+      authPromise = null;
+    }
+  })();
+  return authPromise;
+}
+
+export async function syncFromFirestore(): Promise<DatabaseSchema | null> {
+  try {
+    const authed = await ensureServerAuth();
+    if (!authed) return null;
+    const stateRef = doc(serverFirestore, 'app_state', 'database_snapshot');
+    const snap = await getDoc(stateRef);
+    if (snap.exists()) {
+      const data = snap.data() as { schemaJson?: string };
+      if (data.schemaJson) {
+        const parsed = JSON.parse(data.schemaJson) as DatabaseSchema;
+        if (parsed && parsed.users && parsed.courses && parsed.lessons) {
+          backfillEnrollments(parsed);
+          memoryCache = parsed;
+          try {
+            if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+            fs.writeFileSync(DB_FILE, JSON.stringify(parsed, null, 2), 'utf8');
+          } catch {
+            // ignore
+          }
+          return parsed;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to load database from Cloud Firestore:', err);
+  }
+  return null;
+}
+
+export async function syncToFirestore(db: DatabaseSchema): Promise<void> {
+  try {
+    const authed = await ensureServerAuth();
+    if (!authed) return;
+    const stateRef = doc(serverFirestore, 'app_state', 'database_snapshot');
+    await setDoc(stateRef, {
+      schemaJson: JSON.stringify(db),
+      updatedAt: new Date().toISOString(),
+      userCount: Object.keys(db.users).length,
+      courseCount: Object.keys(db.courses).length,
+      enrollmentCount: Object.keys(db.enrollments).length,
+      progressCount: Object.keys(db.lessonProgress).length,
+    });
+  } catch (err) {
+    console.error('Failed to sync database to Cloud Firestore:', err);
+  }
+}
+
+export async function readDbAsync(): Promise<DatabaseSchema> {
+  if (memoryCache) return memoryCache;
+
+  // 1. Primary: Load from Cloud Firestore (ensures persistent data across Vercel cold starts)
+  const fromCloud = await syncFromFirestore();
+  if (fromCloud) return fromCloud;
+
+  // 2. Secondary: Check local disk file
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const raw = fs.readFileSync(DB_FILE, 'utf8');
+      const parsed = JSON.parse(raw) as DatabaseSchema;
+      if (parsed && parsed.users && parsed.courses && parsed.lessons) {
+        backfillEnrollments(parsed);
+        memoryCache = parsed;
+        void syncToFirestore(parsed);
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Local DB file read warning:', err);
+  }
+
+  // 3. Tertiary: Seed initial data and write to Cloud Firestore
+  const initial = createInitialSeedDatabase();
+  memoryCache = initial;
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf8');
+  } catch {
+    // ignore
+  }
+  void syncToFirestore(initial);
+  return initial;
+}
+
 let memoryCache: DatabaseSchema | null = null;
 
 export function readDb(): DatabaseSchema {
@@ -465,12 +577,16 @@ export function readDb(): DatabaseSchema {
         } else {
           memoryCache = parsed;
         }
+        void syncFromFirestore();
         return parsed;
       }
     }
   } catch (err) {
     console.warn('Initializing fresh LMS database store:', err);
   }
+
+  // Trigger background sync from Cloud Firestore
+  void syncFromFirestore();
 
   const initial = createInitialSeedDatabase();
   writeDb(initial);
@@ -489,6 +605,23 @@ export function writeDb(db: DatabaseSchema): void {
   } catch (err) {
     console.error('Failed to persist LMS database file:', err);
   }
+  // Immediately persist snapshot to Cloud Firestore
+  void syncToFirestore(db);
+}
+
+export async function writeDbAsync(db: DatabaseSchema): Promise<void> {
+  memoryCache = db;
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const tempFile = `${DB_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), 'utf8');
+    fs.renameSync(tempFile, DB_FILE);
+  } catch (err) {
+    console.error('Failed to persist LMS database file:', err);
+  }
+  await syncToFirestore(db);
 }
 
 export function toPublicUserProfile(record: StoredUserRecord): UserProfile {
@@ -517,15 +650,33 @@ export async function authenticateRequest(request: Request): Promise<UserProfile
   const token = authHeader.slice('Bearer '.length).trim();
   if (!token) return null;
 
-  const db = readDb();
+  const db = await readDbAsync();
 
   // 1. Check server-signed HMAC session token
   const sessionData = verifySessionToken(token);
   if (sessionData) {
-    const existingUser = db.users[sessionData.uid];
-    if (existingUser) {
-      return toPublicUserProfile(existingUser);
+    let existingUser = db.users[sessionData.uid];
+    if (!existingUser) {
+      // Vercel serverless persistence: restore verified user from token if container was cold-started
+      const email = sessionData.email.toLowerCase();
+      const isBootstrapAdmin =
+        email === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() ||
+        email === 'admin@lumina.edu' ||
+        (process.env.ADMIN_BOOTSTRAP_EMAIL &&
+          email === process.env.ADMIN_BOOTSTRAP_EMAIL.toLowerCase());
+      const now = new Date().toISOString();
+      existingUser = {
+        uid: sessionData.uid,
+        displayName: email.split('@')[0] || 'Student',
+        email,
+        role: isBootstrapAdmin ? 'admin' : 'student',
+        createdAt: now,
+        updatedAt: now,
+      };
+      db.users[sessionData.uid] = existingUser;
+      writeDb(db);
     }
+    return toPublicUserProfile(existingUser);
   }
 
   // 2. Verify Firebase Auth ID token via Google Identity Toolkit REST API

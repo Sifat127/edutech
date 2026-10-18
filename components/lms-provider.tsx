@@ -6,9 +6,15 @@ import { auth } from '@/lib/firebase';
 import {
   fetchCoursesList,
   getAuthHeaders,
+  getClientCachedEnrollments,
+  getClientCachedProgress,
+  getClientCachedUser,
   getStoredToken,
   INITIAL_PUBLISHED_COURSES,
   logoutAccount,
+  setClientCachedEnrollments,
+  setClientCachedProgress,
+  setClientCachedUser,
   setStoredToken,
   type EnrichedCourse,
 } from '@/lib/lms-client';
@@ -99,14 +105,40 @@ export function LmsProvider({ children }: { children: React.ReactNode }) {
 
       if (enrollRes.ok) {
         const eData = (await enrollRes.json()) as { enrollments?: Enrollment[] };
-        setEnrollments(eData.enrollments || []);
+        const list = eData.enrollments || [];
+        if (list.length > 0) {
+          setEnrollments(list);
+          setClientCachedEnrollments(list);
+        } else {
+          const cached = getClientCachedEnrollments();
+          if (cached.length > 0) {
+            setEnrollments(cached);
+          } else {
+            setEnrollments([]);
+          }
+        }
       }
       if (progRes.ok) {
         const pData = (await progRes.json()) as { progressRecords?: LessonProgress[] };
-        setProgressRecords(pData.progressRecords || []);
+        const list = pData.progressRecords || [];
+        if (list.length > 0) {
+          setProgressRecords(list);
+          setClientCachedProgress(list);
+        } else {
+          const cached = getClientCachedProgress();
+          if (cached.length > 0) {
+            setProgressRecords(cached);
+          } else {
+            setProgressRecords([]);
+          }
+        }
       }
     } catch {
-      // Ignore network errors during background refresh
+      // Fallback to cached on network failure
+      const cachedE = getClientCachedEnrollments();
+      if (cachedE.length > 0) setEnrollments(cachedE);
+      const cachedP = getClientCachedProgress();
+      if (cachedP.length > 0) setProgressRecords(cachedP);
     }
   }, []);
 
@@ -115,6 +147,7 @@ export function LmsProvider({ children }: { children: React.ReactNode }) {
       if (token !== undefined) {
         setStoredToken(token);
       }
+      setClientCachedUser(nextUser);
       setUser(nextUser);
     },
     []
@@ -125,6 +158,15 @@ export function LmsProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     async function bootstrapAuth() {
+      const cachedUser = getClientCachedUser();
+      if (cachedUser && mounted) {
+        setUser(cachedUser);
+        const cachedE = getClientCachedEnrollments();
+        if (cachedE.length > 0) setEnrollments(cachedE);
+        const cachedP = getClientCachedProgress();
+        if (cachedP.length > 0) setProgressRecords(cachedP);
+      }
+
       const storedToken = getStoredToken();
       if (storedToken) {
         try {
@@ -136,11 +178,10 @@ export function LmsProvider({ children }: { children: React.ReactNode }) {
             const data = (await res.json()) as { user?: UserProfile };
             if (mounted && data.user) {
               setUser(data.user);
+              setClientCachedUser(data.user);
               setAuthLoading(false);
               return;
             }
-          } else {
-            setStoredToken(null);
           }
         } catch {
           // Proceed to Firebase Auth listener
@@ -205,6 +246,9 @@ export function LmsProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await logoutAccount();
+    setClientCachedUser(null);
+    setClientCachedEnrollments([]);
+    setClientCachedProgress([]);
     setUser(null);
     setEnrollments([]);
     setProgressRecords([]);

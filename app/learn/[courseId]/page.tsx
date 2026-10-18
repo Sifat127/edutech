@@ -99,6 +99,7 @@ function CourseLearningContent() {
   const [loading, setLoading] = useState(true);
   const [accessDeniedReason, setAccessDeniedReason] = useState<string | null>(null);
   const [togglingComplete, setTogglingComplete] = useState(false);
+  const [justMarkedComplete, setJustMarkedComplete] = useState(false);
   const [enrollingFree, setEnrollingFree] = useState(false);
   const [mobileCurriculumOpen, setMobileCurriculumOpen] = useState(false);
   const [isPlayingLesson, setIsPlayingLesson] = useState(false);
@@ -772,6 +773,10 @@ function CourseLearningContent() {
       });
       setProgress(summary);
       await refreshUserData();
+      if (nextState) {
+        setJustMarkedComplete(true);
+        setTimeout(() => setJustMarkedComplete(false), 1400);
+      }
       notify(
         nextState ? 'Lesson marked as completed!' : 'Lesson marked as incomplete.',
         'success'
@@ -1486,25 +1491,92 @@ function CourseLearningContent() {
                   <h2 className="text-xl font-bold text-slate-900">{currentLesson.title}</h2>
                 </div>
 
-                <button
+                <motion.button
                   type="button"
                   disabled={togglingComplete}
                   onClick={handleToggleComplete}
-                  className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    isCurrentCompleted
-                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
-                      : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                  animate={{
+                    scale: justMarkedComplete ? [1, 1.05, 1] : 1,
+                    backgroundColor: justMarkedComplete
+                      ? '#059669'
+                      : isCurrentCompleted
+                      ? '#ecfdf5'
+                      : '#4f46e5',
+                    color: justMarkedComplete
+                      ? '#ffffff'
+                      : isCurrentCompleted
+                      ? '#065f46'
+                      : '#ffffff',
+                    borderColor: justMarkedComplete
+                      ? '#059669'
+                      : isCurrentCompleted
+                      ? '#a7f3d0'
+                      : 'transparent',
+                  }}
+                  transition={{ duration: 0.35, ease: 'easeOut' }}
+                  className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-lg border whitespace-nowrap shrink-0 cursor-pointer shadow-xs focus-visible:outline-2 focus-visible:outline-indigo-600 transition-shadow ${
+                    isCurrentCompleted && !justMarkedComplete
+                      ? 'hover:bg-emerald-100'
+                      : !isCurrentCompleted && !justMarkedComplete
+                      ? 'hover:bg-indigo-700'
+                      : ''
                   }`}
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>
-                    {togglingComplete
-                      ? 'Updating...'
-                      : isCurrentCompleted
-                      ? 'Completed'
-                      : 'Mark as Complete'}
-                  </span>
-                </button>
+                  <AnimatePresence mode="wait">
+                    {isCurrentCompleted ? (
+                      <motion.span
+                        key="icon-completed"
+                        initial={{ scale: 0.4, rotate: -30, opacity: 0 }}
+                        animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                        exit={{ scale: 0.4, opacity: 0 }}
+                        transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                        className="inline-flex items-center justify-center"
+                      >
+                        <CheckCircle2
+                          className={`w-4 h-4 ${
+                            justMarkedComplete ? 'text-white' : 'text-emerald-700'
+                          }`}
+                        />
+                      </motion.span>
+                    ) : (
+                      <motion.span
+                        key="icon-uncompleted"
+                        initial={{ scale: 0.5, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.5, opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="inline-flex items-center justify-center"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-white/90" />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                  <AnimatePresence mode="wait">
+                    <motion.span
+                      key={
+                        togglingComplete
+                          ? 'updating'
+                          : justMarkedComplete
+                          ? 'done-flash'
+                          : isCurrentCompleted
+                          ? 'completed'
+                          : 'mark'
+                      }
+                      initial={{ y: 3, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      exit={{ y: -3, opacity: 0 }}
+                      transition={{ duration: 0.16 }}
+                    >
+                      {togglingComplete
+                        ? 'Updating...'
+                        : justMarkedComplete
+                        ? 'Completed! 🎉'
+                        : isCurrentCompleted
+                        ? 'Completed'
+                        : 'Mark as Complete'}
+                    </motion.span>
+                  </AnimatePresence>
+                </motion.button>
               </div>
 
               <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4">

@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, ArrowRight } from 'lucide-react';
+import { AlertCircle, ArrowRight, Copy, ExternalLink, ShieldAlert } from 'lucide-react';
 import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { useLms } from '@/components/lms-provider';
@@ -18,6 +18,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [domainError, setDomainError] = useState<string | null>(null);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,6 +38,7 @@ export default function RegisterPage() {
     try {
       setLoading(true);
       setError(null);
+      setDomainError(null);
       const { user, token } = await registerStudentAccount({
         displayName: displayName.trim(),
         email: email.trim(),
@@ -56,14 +58,22 @@ export default function RegisterPage() {
     try {
       setLoading(true);
       setError(null);
+      setDomainError(null);
       const { user, token } = await loginWithGooglePopup();
       setSessionUser(user, token);
       notify(`Welcome, ${user.displayName}!`, 'success');
       router.push(user.role === 'admin' ? '/admin' : '/dashboard');
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Google Sign-In could not be completed.'
-      );
+    } catch (err: unknown) {
+      const errObj = err as { code?: string; message?: string; domain?: string };
+      if (errObj?.code === 'auth/unauthorized-domain' || errObj?.message?.includes('unauthorized-domain')) {
+        const host = errObj.domain || (typeof window !== 'undefined' ? window.location.hostname : 'your Vercel domain');
+        setDomainError(host);
+        setError(null);
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'Google Sign-In could not be completed.'
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -92,6 +102,70 @@ export default function RegisterPage() {
             >
               <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {domainError && (
+            <div
+              role="alert"
+              data-testid="firebase-domain-warning"
+              className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-950 space-y-3"
+            >
+              <div className="flex items-start gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-slate-900">
+                    Firebase Domain Authorization Required on Vercel
+                  </p>
+                  <p className="text-slate-600">
+                    Firebase Authentication requires your Vercel deployment domain to be whitelisted for Google OAuth popups.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-amber-200 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-medium text-slate-500">Your Current Vercel Domain:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(domainError);
+                      notify(`Copied "${domainError}" to clipboard!`, 'success');
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 cursor-pointer"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>Copy Domain</span>
+                  </button>
+                </div>
+                <p className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-1 rounded select-all break-all">
+                  {domainError}
+                </p>
+              </div>
+
+              <div className="text-[11px] text-slate-700 space-y-1 pl-1">
+                <p className="font-semibold text-slate-800">Quick 1-Minute Fix in Firebase Console:</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-slate-600">
+                  <li>
+                    Open{' '}
+                    <a
+                      href="https://console.firebase.google.com/project/second-gist-57c1c/authentication/settings"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-indigo-600 underline inline-flex items-center gap-0.5"
+                    >
+                      <span>Firebase Auth Settings</span>
+                      <ExternalLink className="w-3 h-3 inline" />
+                    </a>
+                  </li>
+                  <li>Scroll down to <strong>Authorized domains</strong> and click <strong>Add domain</strong></li>
+                  <li>Paste <strong>{domainError}</strong> (or <code>vercel.app</code>) and save.</li>
+                </ol>
+              </div>
+
+              <div className="pt-2 border-t border-amber-200/80 text-[11px] text-slate-700">
+                💡 <strong>Instant Alternative:</strong> Complete the registration form below with your name, email, and password. It works immediately on Vercel without any domain setup!
+              </div>
             </div>
           )}
 

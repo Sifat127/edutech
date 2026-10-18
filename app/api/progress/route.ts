@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateRequest, readDb, writeDb } from '@/lib/server-db';
+import { authenticateRequest, readDbAsync, writeDbAsync } from '@/lib/server-db';
 import {
   calculateCourseProgress,
   canAccessCourseLessons,
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Authentication required.' }, { status: 401 });
     }
 
-    const db = readDb();
+    const db = await readDbAsync();
     const records = Object.values(db.lessonProgress)
       .filter((p) => p.userId === caller.uid)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const db = readDb();
+    const db = await readDbAsync();
     const course = db.courses[courseId] ?? null;
     const lesson = db.lessons[lessonId] ?? null;
 
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
     };
 
     db.lessonProgress[progressId] = record;
-    writeDb(db);
+    await writeDbAsync(db);
 
     const summary = calculateCourseProgress({
       courseId,

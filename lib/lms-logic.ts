@@ -1066,3 +1066,195 @@ export function calculateAdminEnrollmentMetrics(params: {
   };
 }
 
+export interface DailyCompletionPoint {
+  date: string; // "YYYY-MM-DD"
+  displayDate: string; // "Oct 17"
+  dayLabel: string; // "17"
+  dayOfWeek: string; // "Sat"
+  completions: number;
+  completedCount: number; // alias
+  cumulative: number;
+  cumulativeCount: number; // alias
+}
+
+export type DailyTrendPoint = DailyCompletionPoint;
+
+export interface CompletionTrendsSummary {
+  dataPoints: DailyCompletionPoint[];
+  points: DailyCompletionPoint[]; // alias
+  totalLast30Days: number;
+  totalCompletionsLast30Days: number; // alias
+  activeDaysCount: number;
+  currentStreakDays: number;
+  longestStreakDays: number;
+  completionRatePerWeek: number;
+  dailyAverage: number;
+  consistencyPercentage: number;
+  peakDay: { date: string; displayDate: string; count: number } | null;
+  bestDay: { date: string; displayDate: string; count: number } | null; // alias
+}
+
+const MONTH_SHORT_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
+
+const DAY_SHORT_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+/**
+ * Calculates student course/lesson completion trends and learning consistency
+ * over the past 30 days based on verified LessonProgress records.
+ */
+export function calculateCompletionTrends(
+  progressRecords: LessonProgress[],
+  daysOrReferenceDate?: number | Date | string,
+  referenceDateInput?: Date | string
+): CompletionTrendsSummary {
+  let days = 30;
+  let refDateRaw: Date | string | undefined = undefined;
+
+  if (typeof daysOrReferenceDate === 'number') {
+    days = daysOrReferenceDate;
+    refDateRaw = referenceDateInput;
+  } else if (daysOrReferenceDate !== undefined) {
+    refDateRaw = daysOrReferenceDate;
+  }
+
+  const baseDate = refDateRaw
+    ? new Date(refDateRaw)
+    : new Date();
+  const safeBase = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
+
+  // Build a map of YYYY-MM-DD -> completion count
+  const completionsByDate = new Map<string, number>();
+  for (const record of progressRecords) {
+    if (!record.isCompleted) continue;
+    const rawTimestamp = record.completedAt || record.updatedAt;
+    if (!rawTimestamp) continue;
+    const parsed = new Date(rawTimestamp);
+    if (Number.isNaN(parsed.getTime())) continue;
+
+    // Use UTC date string YYYY-MM-DD
+    const y = parsed.getUTCFullYear();
+    const m = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getUTCDate()).padStart(2, '0');
+    const dateKey = `${y}-${m}-${d}`;
+    completionsByDate.set(dateKey, (completionsByDate.get(dateKey) || 0) + 1);
+  }
+
+  // Generate `days` consecutive daily buckets ending on safeBase
+  const dataPoints: DailyCompletionPoint[] = [];
+  let rollingCumulative = 0;
+  let peakDay: { date: string; displayDate: string; count: number } | null = null;
+
+  for (let i = days - 1; i >= 0; i--) {
+    const bucketDate = new Date(
+      Date.UTC(
+        safeBase.getUTCFullYear(),
+        safeBase.getUTCMonth(),
+        safeBase.getUTCDate() - i
+      )
+    );
+    const y = bucketDate.getUTCFullYear();
+    const monthIdx = bucketDate.getUTCMonth();
+    const dayNum = bucketDate.getUTCDate();
+    const dayOfWeekIdx = bucketDate.getUTCDay();
+    const mStr = String(monthIdx + 1).padStart(2, '0');
+    const dStr = String(dayNum).padStart(2, '0');
+    const dateKey = `${y}-${mStr}-${dStr}`;
+
+    const count = completionsByDate.get(dateKey) || 0;
+    rollingCumulative += count;
+
+    const displayDate = `${MONTH_SHORT_NAMES[monthIdx]} ${dayNum}`;
+    const dayLabel = String(dayNum);
+    const dayOfWeek = DAY_SHORT_NAMES[dayOfWeekIdx];
+
+    dataPoints.push({
+      date: dateKey,
+      displayDate,
+      dayLabel,
+      dayOfWeek,
+      completions: count,
+      completedCount: count,
+      cumulative: rollingCumulative,
+      cumulativeCount: rollingCumulative,
+    });
+
+    if (count > 0 && (!peakDay || count > peakDay.count)) {
+      peakDay = { date: dateKey, displayDate, count };
+    }
+  }
+
+  const totalLast30Days = rollingCumulative;
+  const activeDaysCount = dataPoints.filter((pt) => pt.completions > 0).length;
+
+  // Compute streaks
+  let longestStreakDays = 0;
+  let tempStreak = 0;
+  for (const pt of dataPoints) {
+    if (pt.completions > 0) {
+      tempStreak += 1;
+      if (tempStreak > longestStreakDays) {
+        longestStreakDays = tempStreak;
+      }
+    } else {
+      tempStreak = 0;
+    }
+  }
+
+  // Current streak (counting backwards from today or yesterday)
+  let currentStreakDays = 0;
+  const lastIdx = dataPoints.length - 1;
+  const todayCount = dataPoints[lastIdx]?.completions ?? 0;
+  const yesterdayCount = dataPoints[lastIdx - 1]?.completions ?? 0;
+
+  if (todayCount > 0) {
+    for (let i = lastIdx; i >= 0; i--) {
+      if (dataPoints[i].completions > 0) {
+        currentStreakDays += 1;
+      } else {
+        break;
+      }
+    }
+  } else if (yesterdayCount > 0) {
+    for (let i = lastIdx - 1; i >= 0; i--) {
+      if (dataPoints[i].completions > 0) {
+        currentStreakDays += 1;
+      } else {
+        break;
+      }
+    }
+  }
+
+  const completionRatePerWeek =
+    days > 0 ? Math.round((totalLast30Days / (days / 7)) * 10) / 10 : 0;
+  const dailyAverage = days > 0 ? Math.round((totalLast30Days / days) * 10) / 10 : 0;
+  const consistencyPercentage = days > 0 ? Math.round((activeDaysCount / days) * 100) : 0;
+
+  return {
+    dataPoints,
+    points: dataPoints,
+    totalLast30Days,
+    totalCompletionsLast30Days: totalLast30Days,
+    activeDaysCount,
+    currentStreakDays,
+    longestStreakDays,
+    completionRatePerWeek,
+    dailyAverage,
+    consistencyPercentage,
+    peakDay,
+    bestDay: peakDay,
+  };
+}
+

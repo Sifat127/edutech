@@ -11,6 +11,7 @@ import {
   getAuthorizedCourseLessons,
   calculateCourseProgress,
   calculateCourseStudentDistribution,
+  calculateCompletionTrends,
   calculateAdminEnrollmentMetrics,
   canInitiatePaidEnrollment,
   generateSecretCode,
@@ -457,3 +458,95 @@ test('video quality helpers validate quality codes and buildYouTubeEmbedUrl incl
     args: [{ videoId: 'BwuLxPH8IDs', startSeconds: 42, suggestedQuality: 'hd1080' }],
   });
 });
+
+test('calculateCompletionTrends handles empty progress records smoothly', () => {
+  const result = calculateCompletionTrends([], 30, '2026-10-17T12:00:00.000Z');
+  assert.equal(result.points.length, 30);
+  assert.equal(result.totalCompletionsLast30Days, 0);
+  assert.equal(result.activeDaysCount, 0);
+  assert.equal(result.currentStreakDays, 0);
+  assert.equal(result.longestStreakDays, 0);
+  assert.equal(result.dailyAverage, 0);
+  assert.equal(result.consistencyPercentage, 0);
+  assert.equal(result.bestDay, null);
+  assert.equal(result.points[29].date, '2026-10-17');
+});
+
+test('calculateCompletionTrends accurately calculates completions, cumulative counts, and streaks', () => {
+  const refDate = '2026-10-17T12:00:00.000Z';
+  const sampleProgress: LessonProgress[] = [
+    // 2 completions on 2026-10-17 (today)
+    {
+      id: 'p1',
+      userId: 'u1',
+      courseId: 'c1',
+      lessonId: 'l1',
+      isCompleted: true,
+      completedAt: '2026-10-17T09:00:00.000Z',
+      updatedAt: '2026-10-17T09:00:00.000Z',
+    },
+    {
+      id: 'p2',
+      userId: 'u1',
+      courseId: 'c1',
+      lessonId: 'l2',
+      isCompleted: true,
+      completedAt: '2026-10-17T11:00:00.000Z',
+      updatedAt: '2026-10-17T11:00:00.000Z',
+    },
+    // 1 completion on 2026-10-16 (yesterday)
+    {
+      id: 'p3',
+      userId: 'u1',
+      courseId: 'c2',
+      lessonId: 'l3',
+      isCompleted: true,
+      completedAt: '2026-10-16T15:30:00.000Z',
+      updatedAt: '2026-10-16T15:30:00.000Z',
+    },
+    // 1 completion on 2026-10-15
+    {
+      id: 'p4',
+      userId: 'u1',
+      courseId: 'c2',
+      lessonId: 'l4',
+      isCompleted: true,
+      completedAt: '2026-10-15T08:00:00.000Z',
+      updatedAt: '2026-10-15T08:00:00.000Z',
+    },
+    // 1 completion on 2026-10-10
+    {
+      id: 'p5',
+      userId: 'u1',
+      courseId: 'c1',
+      lessonId: 'l5',
+      isCompleted: true,
+      completedAt: '2026-10-10T14:00:00.000Z',
+      updatedAt: '2026-10-10T14:00:00.000Z',
+    },
+    // Incomplete record (should be ignored)
+    {
+      id: 'p6',
+      userId: 'u1',
+      courseId: 'c1',
+      lessonId: 'l6',
+      isCompleted: false,
+      completedAt: '2026-10-17T11:30:00.000Z',
+      updatedAt: '2026-10-17T11:30:00.000Z',
+    },
+  ];
+
+  const result = calculateCompletionTrends(sampleProgress, 30, refDate);
+  assert.equal(result.points.length, 30);
+  assert.equal(result.totalCompletionsLast30Days, 5);
+  assert.equal(result.activeDaysCount, 4);
+  // Consecutive active days: Oct 15, 16, 17 -> streak of 3
+  assert.equal(result.currentStreakDays, 3);
+  assert.equal(result.longestStreakDays, 3);
+  assert.equal(result.bestDay?.count, 2);
+  assert.equal(result.bestDay?.date, '2026-10-17');
+  // Check cumulative count on the last day equals total
+  assert.equal(result.points[29].cumulativeCount, 5);
+  assert.equal(result.points[29].completedCount, 2);
+});
+

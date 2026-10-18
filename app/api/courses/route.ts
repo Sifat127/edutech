@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateRequest, readDb, writeDb } from '@/lib/server-db';
+import { authenticateRequest, readDbAsync, writeDbAsync } from '@/lib/server-db';
 import {
   toPublicCurriculum,
   validateCourseInput,
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     const caller = await authenticateRequest(request);
     const isAdmin = caller?.role === 'admin';
 
-    const db = readDb();
+    const db = await readDbAsync();
     const allLessons = Object.values(db.lessons);
 
     let courses = Object.values(db.courses).filter((course) => {
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const db = readDb();
+    const db = await readDbAsync();
     const now = new Date().toISOString();
     const id =
       typeof body.id === 'string' && /^[a-zA-Z0-9_-]{3,64}$/.test(body.id) && !db.courses[body.id]
@@ -92,7 +92,7 @@ export async function POST(request: Request) {
     };
 
     db.courses[id] = newCourse;
-    writeDb(db);
+    await writeDbAsync(db);
 
     return NextResponse.json({ course: newCourse }, { status: 201 });
   } catch {
