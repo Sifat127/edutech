@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { authenticateRequest, readDb, writeDb } from '@/lib/server-db';
+import { authenticateRequest, readDb, readDbAsync, writeDb, writeDbAsync } from '@/lib/server-db';
 import {
   calculateAdminEnrollmentMetrics,
+  generateDeterministicSecretCode,
   toAccessStatusFromUpper,
   toEnrollmentStatusUpper,
   type Enrollment,
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
     const page = Math.max(1, Number(url.searchParams.get('page') || 1));
     const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 50)));
 
-    const db = readDb();
+    const db = await readDbAsync();
     const allCourses = Object.values(db.courses);
     const allEnrollments = Object.values(db.enrollments);
 
@@ -49,15 +50,28 @@ export async function GET(request: Request) {
       enrollments: allEnrollments,
     });
 
+    let mutated = false;
     const enriched: EnrichedAdminEnrollment[] = allEnrollments
       .map((enrollment) => {
         const student = db.users[enrollment.userId];
         const course = db.courses[enrollment.courseId];
         const statusUpper = toEnrollmentStatusUpper(enrollment);
+        const resolvedCode =
+          enrollment.secretCode ||
+          generateDeterministicSecretCode(
+            student?.email ? student.email.toLowerCase() : enrollment.userId,
+            enrollment.courseId
+          );
+
+        if (!enrollment.secretCode) {
+          enrollment.secretCode = resolvedCode;
+          mutated = true;
+        }
+
         return {
           ...enrollment,
           status: statusUpper,
-          secretCode: enrollment.secretCode || `EDU-${enrollment.id.slice(-6).toUpperCase()}`,
+          secretCode: resolvedCode,
           paymentMethod:
             enrollment.paymentMethod || (course?.courseType === 'free' ? 'Free' : 'bKash'),
           createdAt: enrollment.createdAt || enrollment.enrolledAt,
@@ -75,6 +89,10 @@ export async function GET(request: Request) {
         if (a.status !== 'PENDING' && b.status === 'PENDING') return 1;
         return b.createdAt.localeCompare(a.createdAt);
       });
+
+    if (mutated) {
+      await writeDbAsync(db);
+    }
 
     const filtered = enriched.filter((item) => {
       if (

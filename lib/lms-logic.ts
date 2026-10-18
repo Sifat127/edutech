@@ -164,6 +164,59 @@ export function generateSecretCode(existingCodes?: Iterable<string>): string {
   return `EDU-${fallback}`;
 }
 
+/**
+ * Generates a permanent, deterministic Secret Code formatted as "EDU-XXXXXX"
+ * for a specific student and course, ensuring the student gets the exact same
+ * fixed Secret Code across all sessions, reloads, and payment visits.
+ */
+export function generateDeterministicSecretCode(
+  userId: string,
+  courseId: string,
+  existingCodes?: Iterable<string>
+): string {
+  const taken = new Set<string>();
+  if (existingCodes) {
+    for (const code of existingCodes) {
+      if (code) taken.add(normalizeSecretCode(code));
+    }
+  }
+
+  const u = (userId || 'student').trim().toLowerCase();
+  const c = (courseId || 'course').trim().toLowerCase();
+  let hashVal = 0;
+  for (let i = 0; i < u.length; i++) {
+    hashVal = ((hashVal << 5) - hashVal + u.charCodeAt(i)) | 0;
+  }
+  for (let i = 0; i < c.length; i++) {
+    hashVal = ((hashVal << 5) - hashVal + c.charCodeAt(i)) | 0;
+  }
+
+  const saltStr = `${u}:${c}`;
+  for (let offset = 0; offset < 100; offset++) {
+    let suffix = '';
+    let currentHash = Math.abs(hashVal + offset * 7919 + offset * 31);
+    for (let i = 0; i < 6; i++) {
+      const charCode = saltStr.charCodeAt((i + offset) % saltStr.length) || 65;
+      const idx = Math.abs(currentHash + charCode * 31 + i * 17) % SECRET_CODE_ALPHABET.length;
+      suffix += SECRET_CODE_ALPHABET[idx];
+      currentHash = Math.floor(currentHash / 7) + charCode;
+    }
+    const candidate = `EDU-${suffix}`;
+    if (!taken.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  // 100% deterministic fallback (never random)
+  let fallbackVal = Math.abs(hashVal);
+  let fallbackSuffix = '';
+  for (let i = 0; i < 6; i++) {
+    fallbackSuffix += SECRET_CODE_ALPHABET[fallbackVal % SECRET_CODE_ALPHABET.length];
+    fallbackVal = Math.floor(fallbackVal / SECRET_CODE_ALPHABET.length) + 13;
+  }
+  return `EDU-${fallbackSuffix}`;
+}
+
 export function toEnrollmentStatusUpper(
   enrollment: Pick<Enrollment, 'accessStatus' | 'status'>
 ): EnrollmentStatusUpper {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateRequest, readDb } from '@/lib/server-db';
+import { authenticateRequest, readDbAsync } from '@/lib/server-db';
 import {
   normalizeSecretCode,
   toEnrollmentStatusUpper,
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const db = readDb();
+    const db = await readDbAsync();
     const matched = Object.values(db.enrollments).find(
       (e) => e.secretCode && normalizeSecretCode(e.secretCode) === normalizedCode
     );

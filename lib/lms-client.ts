@@ -196,6 +196,28 @@ export function setClientCachedProgress(progress: LessonProgress[]): void {
   }
 }
 
+const PERMANENT_CODE_STORAGE_PREFIX = 'lumina_lms_fixed_code_';
+
+export function getPermanentSecretCode(userId: string, courseId: string): string | null {
+  if (typeof window === 'undefined' || !userId || !courseId) return null;
+  try {
+    const key = `${PERMANENT_CODE_STORAGE_PREFIX}${userId}_${courseId}`;
+    return window.localStorage.getItem(key) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setPermanentSecretCode(userId: string, courseId: string, code: string): void {
+  if (typeof window === 'undefined' || !userId || !courseId || !code) return;
+  try {
+    const key = `${PERMANENT_CODE_STORAGE_PREFIX}${userId}_${courseId}`;
+    window.localStorage.setItem(key, code);
+  } catch {
+    // ignore
+  }
+}
+
 export async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -216,12 +238,54 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
+let clientFirestoreQuotaExhaustedUntil = 0;
+
+export function isClientFirestoreQuotaExhausted(): boolean {
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = window.sessionStorage.getItem('lms_fs_quota_exhausted');
+      if (stored && Number(stored) > Date.now()) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return Date.now() < clientFirestoreQuotaExhaustedUntil;
+}
+
+export function markClientFirestoreQuotaExhausted(err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  const isQuota =
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Quota exceeded') ||
+    (typeof err === 'object' && err !== null && (err as { code?: string | number }).code === 8);
+  if (isQuota) {
+    clientFirestoreQuotaExhaustedUntil = Date.now() + 60 * 60 * 1000;
+    if (typeof window !== 'undefined') {
+      try {
+        window.sessionStorage.setItem(
+          'lms_fs_quota_exhausted',
+          String(Date.now() + 60 * 60 * 1000)
+        );
+      } catch {
+        // ignore
+      }
+    }
+    console.warn(
+      'Firestore write quota reached on free tier. Operations continue smoothly using authoritative server storage.'
+    );
+  }
+}
+
 /**
  * Syncs a user profile to Cloud Firestore when authenticated via Firebase Auth,
  * strictly adhering to firestore.rules validation blueprints.
  */
 async function syncUserToFirestore(profile: UserProfile): Promise<void> {
-  if (!auth.currentUser) return;
+  if (!auth.currentUser || isClientFirestoreQuotaExhausted()) return;
   const uid = auth.currentUser.uid;
   try {
     const ref = doc(db, 'users', uid);
@@ -240,6 +304,7 @@ async function syncUserToFirestore(profile: UserProfile): Promise<void> {
       });
     }
   } catch (err) {
+    markClientFirestoreQuotaExhausted(err);
     console.warn('Firestore user sync notice:', err);
   }
 }
@@ -410,13 +475,14 @@ export async function updateUserDisplayName(displayName: string): Promise<UserPr
     throw new Error(data.error || 'Failed to update profile.');
   }
 
-  if (auth.currentUser) {
+  if (auth.currentUser && !isClientFirestoreQuotaExhausted()) {
     try {
       await updateDoc(doc(db, 'users', auth.currentUser.uid), {
         displayName: data.user.displayName.slice(0, 100),
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
+      markClientFirestoreQuotaExhausted(err);
       console.warn('Firestore update profile notice:', err);
     }
   }
@@ -506,7 +572,7 @@ export async function enrollInCourse(courseId: string): Promise<Enrollment> {
   ]);
 
   // Sync to Cloud Firestore if authenticated via Firebase Auth
-  if (auth.currentUser) {
+  if (auth.currentUser && !isClientFirestoreQuotaExhausted()) {
     const uid = auth.currentUser.uid;
     const enrollmentId = makeEnrollmentId(uid, courseId);
     try {
@@ -524,6 +590,7 @@ export async function enrollInCourse(courseId: string): Promise<Enrollment> {
         { merge: true }
       );
     } catch (err) {
+      markClientFirestoreQuotaExhausted(err);
       console.warn('Firestore enrollment sync notice:', err);
     }
   }
@@ -588,7 +655,7 @@ export async function toggleLessonCompletion(params: {
     ...currentProg.filter((p) => p.lessonId !== params.lessonId),
   ]);
 
-  if (auth.currentUser) {
+  if (auth.currentUser && !isClientFirestoreQuotaExhausted()) {
     const uid = auth.currentUser.uid;
     const progressId = makeProgressId(uid, params.lessonId);
     try {
@@ -606,6 +673,7 @@ export async function toggleLessonCompletion(params: {
         { merge: true }
       );
     } catch (err) {
+      markClientFirestoreQuotaExhausted(err);
       console.warn('Firestore progress sync notice:', err);
     }
   }
@@ -636,9 +704,9 @@ export async function createCourseAdmin(payload: {
   if (
     auth.currentUser &&
     auth.currentUser.emailVerified &&
-    auth.currentUser.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()
+    auth.currentUser.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() &&
+    !isClientFirestoreQuotaExhausted()
   ) {
-    const path = `courses/${data.course.id}`;
     try {
       await setDoc(doc(db, 'courses', data.course.id), {
         id: data.course.id,
@@ -653,7 +721,8 @@ export async function createCourseAdmin(payload: {
         updatedAt: serverTimestamp(),
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, path);
+      markClientFirestoreQuotaExhausted(err);
+      console.warn('Firestore course direct sync notice (persisted in server DB):', err);
     }
   }
 
@@ -699,16 +768,17 @@ export async function deleteCourseAdmin(courseId: string): Promise<void> {
   if (
     auth.currentUser &&
     auth.currentUser.emailVerified &&
-    auth.currentUser.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()
+    auth.currentUser.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() &&
+    !isClientFirestoreQuotaExhausted()
   ) {
-    const path = `courses/${courseId}`;
     try {
       const snap = await getDoc(doc(db, 'courses', courseId));
       if (snap.exists()) {
         await deleteDoc(doc(db, 'courses', courseId));
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+      markClientFirestoreQuotaExhausted(err);
+      console.warn('Firestore course delete sync notice (deleted in server DB):', err);
     }
   }
 }
@@ -841,29 +911,44 @@ export interface InitiatePaidEnrollmentResponse {
 
 export async function initiatePaidEnrollment(params: {
   courseId: string;
+  secretCode?: string;
   trxId?: string;
   senderPhone?: string;
 }): Promise<InitiatePaidEnrollmentResponse> {
+  const user = getClientCachedUser();
+  const cachedPermCode = user ? getPermanentSecretCode(user.uid, params.courseId) : null;
+  const initialEnrollments = getClientCachedEnrollments();
+  const existingCached = initialEnrollments.find((e) => e.courseId === params.courseId);
+  const codeToSend =
+    params.secretCode || existingCached?.secretCode || cachedPermCode || undefined;
+
   const headers = await getAuthHeaders();
   const res = await fetch('/api/enrollment/initiate', {
     method: 'POST',
     headers,
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      ...params,
+      ...(codeToSend ? { secretCode: codeToSend } : {}),
+    }),
   });
   const data = (await res.json()) as Partial<InitiatePaidEnrollmentResponse> & { error?: string };
   if (!res.ok || !data.enrollment || !data.secretCode || !data.course || !data.bkashConfig) {
     throw new Error(data.error || 'Unable to initiate bKash course enrollment.');
   }
 
+  // Save permanent code locally for this student and course
+  if (user && data.secretCode) {
+    setPermanentSecretCode(user.uid, params.courseId, data.secretCode);
+  }
+
   // Cache pending enrollment locally
-  const currentEnrollments = getClientCachedEnrollments();
   setClientCachedEnrollments([
     data.enrollment,
-    ...currentEnrollments.filter((e) => e.courseId !== params.courseId),
+    ...initialEnrollments.filter((e) => e.courseId !== params.courseId),
   ]);
 
   // Sync pending enrollment to Cloud Firestore if authenticated via Firebase Auth
-  if (auth.currentUser) {
+  if (auth.currentUser && !isClientFirestoreQuotaExhausted()) {
     const uid = auth.currentUser.uid;
     const enrollmentId = makeEnrollmentId(uid, params.courseId);
     const trimmedTrxId = params.trxId?.trim() ? params.trxId.trim().slice(0, 64) : undefined;
@@ -890,6 +975,7 @@ export async function initiatePaidEnrollment(params: {
         { merge: true }
       );
     } catch (err) {
+      markClientFirestoreQuotaExhausted(err);
       console.warn('Firestore initiate enrollment notice:', err);
     }
   }

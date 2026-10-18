@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateRequest, readDb, writeDb } from '@/lib/server-db';
+import { authenticateRequest, readDbAsync, writeDbAsync } from '@/lib/server-db';
 import {
   normalizeSecretCode,
   type AccessStatus,
@@ -34,7 +34,7 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const db = readDb();
+    const db = await readDbAsync();
     const matched = Object.values(db.enrollments).find(
       (e) => e.secretCode && normalizeSecretCode(e.secretCode) === normalizedCode
     );
@@ -63,7 +63,7 @@ export async function PATCH(request: Request) {
     };
 
     db.enrollments[matched.id] = updated;
-    writeDb(db);
+    await writeDbAsync(db);
 
     const student = db.users[updated.userId];
     const course = db.courses[updated.courseId];

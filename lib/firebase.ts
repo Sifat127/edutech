@@ -39,8 +39,17 @@ export function handleFirestoreError(
   operationType: OperationType,
   path: string | null
 ): never {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  const isQuota =
+    errMsg.includes('RESOURCE_EXHAUSTED') ||
+    errMsg.includes('resource-exhausted') ||
+    errMsg.includes('Quota limit exceeded') ||
+    errMsg.includes('Quota exceeded');
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: isQuota
+      ? 'Cloud Firestore daily quota limit reached. Changes continue through local persistence.'
+      : errMsg,
     authInfo: {
       userId: auth.currentUser?.uid ?? null,
       email: auth.currentUser?.email ?? null,
@@ -56,7 +65,12 @@ export function handleFirestoreError(
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+
+  if (isQuota) {
+    console.warn('Firestore Quota Notice: ', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -67,8 +81,11 @@ export async function testFirestoreConnection(): Promise<void> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('the client is offline')) {
+      console.warn('Firestore client is currently offline.');
+    } else if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('resource-exhausted')) {
+      console.warn('Firestore daily write quota reached; operating via authoritative LMS server.');
     }
   }
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateRequest, readDb, writeDb } from '@/lib/server-db';
+import { authenticateRequest, readDb, readDbAsync, writeDb } from '@/lib/server-db';
 import {
   calculateCourseProgress,
   isValidId,
@@ -18,7 +18,7 @@ export async function GET(
       return NextResponse.json({ error: 'Invalid course ID.' }, { status: 400 });
     }
 
-    const db = readDb();
+    const db = await readDbAsync();
     const course = db.courses[id];
     if (!course) {
       return NextResponse.json({ error: 'Course not found.' }, { status: 404 });
@@ -37,8 +37,17 @@ export async function GET(
     const courseLessons = Object.values(db.lessons).filter((l) => l.courseId === course.id);
     const curriculum = toPublicCurriculum(courseLessons);
 
+    const callerUid = caller ? caller.uid : '';
+    const callerEmail = caller?.email ? caller.email.toLowerCase() : '';
     const enrollment = caller
-      ? db.enrollments[makeEnrollmentId(caller.uid, course.id)] ?? null
+      ? db.enrollments[makeEnrollmentId(caller.uid, course.id)] ??
+        Object.values(db.enrollments).find(
+          (e) =>
+            e.courseId === course.id &&
+            (e.userId === callerUid ||
+              (callerEmail && e.userId.toLowerCase() === callerEmail))
+        ) ??
+        null
       : null;
 
     const progress = caller

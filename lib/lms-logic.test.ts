@@ -15,6 +15,7 @@ import {
   calculateAdminEnrollmentMetrics,
   canInitiatePaidEnrollment,
   generateSecretCode,
+  generateDeterministicSecretCode,
   isValidSecretCodeFormat,
   normalizeSecretCode,
   clampVolume,
@@ -549,4 +550,26 @@ test('calculateCompletionTrends accurately calculates completions, cumulative co
   assert.equal(result.points[29].cumulativeCount, 5);
   assert.equal(result.points[29].completedCount, 2);
 });
+
+test('generateDeterministicSecretCode produces permanent, immutable code across repeated calls', () => {
+  const code1 = generateDeterministicSecretCode('student_alex', 'course_cloud_architecture');
+  const code2 = generateDeterministicSecretCode('student_alex', 'course_cloud_architecture');
+  const code3 = generateDeterministicSecretCode('STUDENT_ALEX', 'course_cloud_architecture');
+
+  // Must be strictly identical and immutable
+  assert.equal(code1, code2);
+  assert.equal(code1, code3);
+  assert.equal(isValidSecretCodeFormat(code1), true);
+
+  // Different user produces a distinct code
+  const codeUser2 = generateDeterministicSecretCode('student_maya', 'course_cloud_architecture');
+  assert.notEqual(code1, codeUser2);
+  assert.equal(isValidSecretCodeFormat(codeUser2), true);
+
+  // Avoids collision with existing codes
+  const collided = generateDeterministicSecretCode('student_alex', 'course_cloud_architecture', [code1]);
+  assert.notEqual(collided, code1);
+  assert.equal(isValidSecretCodeFormat(collided), true);
+});
+
 

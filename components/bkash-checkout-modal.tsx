@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Check,
@@ -15,11 +15,14 @@ import {
   X,
 } from 'lucide-react';
 import {
+  getPermanentSecretCode,
   initiatePaidEnrollment,
+  setPermanentSecretCode,
   type InitiatePaidEnrollmentResponse,
 } from '@/lib/lms-client';
 import {
   BKASH_PAYMENT_CONFIG,
+  makeEnrollmentId,
   type Course,
   type Enrollment,
   type UserProfile,
@@ -53,43 +56,123 @@ export function BkashCheckoutModal({
   const [trxId, setTrxId] = useState(existingEnrollment?.trxId || '');
   const [senderPhone, setSenderPhone] = useState(existingEnrollment?.senderPhone || '');
 
+  const initiatedRef = useRef(false);
+  const courseRef = useRef(course);
+  const userRef = useRef(user);
+  const existingEnrollmentRef = useRef(existingEnrollment);
+  const onEnrollmentInitiatedRef = useRef(onEnrollmentInitiated);
+
+  useEffect(() => {
+    courseRef.current = course;
+    userRef.current = user;
+    existingEnrollmentRef.current = existingEnrollment;
+    onEnrollmentInitiatedRef.current = onEnrollmentInitiated;
+  });
+
+  // Synchronize inputs when existingEnrollment changes
+  useEffect(() => {
+    if (existingEnrollment?.trxId) setTrxId(existingEnrollment.trxId);
+    if (existingEnrollment?.senderPhone) setSenderPhone(existingEnrollment.senderPhone);
+  }, [existingEnrollment?.trxId, existingEnrollment?.senderPhone]);
+
   const initiateOrLoadSecretCode = useCallback(async () => {
-    if (!user || !isOpen) return;
+    const currentUser = userRef.current;
+    const currentCourse = courseRef.current;
+    if (!currentUser) return;
+
+    const currentUserId = currentUser.uid;
+    const currentCourseId = currentCourse.id;
+
+    // 1. Check if we ALREADY have a permanent secret code (from existing enrollment or client cache)
+    const cachedCode = getPermanentSecretCode(currentUserId, currentCourseId);
+    const currentEnrollment = existingEnrollmentRef.current;
+    const knownCode = currentEnrollment?.secretCode || cachedCode;
+
+    if (knownCode) {
+      setPermanentSecretCode(currentUserId, currentCourseId, knownCode);
+      setCheckoutData((prev) => prev || {
+        enrollment: currentEnrollment || {
+          id: makeEnrollmentId(currentUserId, currentCourseId),
+          userId: currentUserId,
+          courseId: currentCourseId,
+          accessStatus: 'pending',
+          status: 'PENDING',
+          secretCode: knownCode,
+          paymentMethod: 'bKash',
+          createdAt: new Date().toISOString(),
+          activatedAt: null,
+          enrolledAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        secretCode: knownCode,
+        course: {
+          id: currentCourse.id,
+          title: currentCourse.title,
+          price: currentCourse.price,
+          category: currentCourse.category,
+        },
+        bkashConfig: BKASH_PAYMENT_CONFIG,
+        isExistingPending: true,
+      });
+
+      // Background sync to ensure server/Firestore has this exact code recorded without changing it
+      try {
+        const resp = await initiatePaidEnrollment({
+          courseId: currentCourseId,
+          secretCode: knownCode,
+        });
+        setCheckoutData(resp);
+        if (resp.enrollment.trxId) setTrxId(resp.enrollment.trxId);
+        if (resp.enrollment.senderPhone) setSenderPhone(resp.enrollment.senderPhone);
+        onEnrollmentInitiatedRef.current?.(resp.enrollment);
+      } catch {
+        // ignore background sync errors if knownCode is already displayed
+      }
+      return;
+    }
+
+    // 2. If NO code existed yet, generate the permanent fixed code once
     try {
       setLoading(true);
       setError(null);
-      const response = await initiatePaidEnrollment({
-        courseId: course.id,
+      const resp = await initiatePaidEnrollment({
+        courseId: currentCourseId,
       });
-      setCheckoutData(response);
-      if (response.enrollment.trxId) {
-        setTrxId(response.enrollment.trxId);
+      setCheckoutData(resp);
+      if (resp.secretCode) {
+        setPermanentSecretCode(currentUserId, currentCourseId, resp.secretCode);
       }
-      if (response.enrollment.senderPhone) {
-        setSenderPhone(response.enrollment.senderPhone);
-      }
-      if (onEnrollmentInitiated) {
-        onEnrollmentInitiated(response.enrollment);
-      }
+      if (resp.enrollment.trxId) setTrxId(resp.enrollment.trxId);
+      if (resp.enrollment.senderPhone) setSenderPhone(resp.enrollment.senderPhone);
+      onEnrollmentInitiatedRef.current?.(resp.enrollment);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : 'Failed to generate Secret Code for this course.'
+        err instanceof Error ? err.message : 'Failed to retrieve Secret Code for this course.'
       );
     } finally {
       setLoading(false);
     }
-  }, [user, isOpen, course.id, onEnrollmentInitiated]);
+  }, []);
 
+  // Load or initiate permanent fixed code (strictly once per modal open)
   useEffect(() => {
-    if (isOpen && user) {
-      void initiateOrLoadSecretCode();
+    if (!isOpen) {
+      initiatedRef.current = false;
+      return;
     }
-  }, [isOpen, user, initiateOrLoadSecretCode]);
+    if (initiatedRef.current) return;
+    initiatedRef.current = true;
+    void initiateOrLoadSecretCode();
+  }, [isOpen, initiateOrLoadSecretCode]);
 
   if (!isOpen) return null;
 
+  const cachedPermCode = user ? getPermanentSecretCode(user.uid, course.id) : null;
   const secretCode =
-    checkoutData?.secretCode || existingEnrollment?.secretCode || '';
+    checkoutData?.secretCode ||
+    existingEnrollment?.secretCode ||
+    cachedPermCode ||
+    '';
   const bkashConfig = checkoutData?.bkashConfig || BKASH_PAYMENT_CONFIG;
 
   const handleCopySecretCode = async () => {
@@ -122,6 +205,7 @@ export function BkashCheckoutModal({
       setSavingRef(true);
       const response = await initiatePaidEnrollment({
         courseId: course.id,
+        secretCode: secretCode || existingEnrollment?.secretCode,
         trxId: trxId.trim() || undefined,
         senderPhone: senderPhone.trim() || undefined,
       });
@@ -245,15 +329,20 @@ export function BkashCheckoutModal({
           <div className="space-y-5">
             {/* Generated Secret Code Highlight Box */}
             <div className="bg-slate-900 text-white rounded-xl p-5 space-y-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-300">
                   <KeyRound className="w-3.5 h-3.5" />
-                  <span>Your Unique Enrollment Secret Code</span>
+                  <span>Your Permanent Secret Code (Fixed &amp; Never Changes)</span>
                 </span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-mono text-amber-300">
-                  <Clock className="w-3 h-3" />
-                  <span>Status: PENDING</span>
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">
+                    Fixed Code
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[11px] font-mono text-amber-300">
+                    <Clock className="w-3 h-3" />
+                    <span>Status: PENDING</span>
+                  </span>
+                </div>
               </div>
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-950/90 border border-slate-800 rounded-lg px-4 py-3">

@@ -19,7 +19,7 @@ import { Footer } from '@/components/footer';
 import { CourseThumbnail } from '@/components/course-card';
 import { BkashCheckoutModal } from '@/components/bkash-checkout-modal';
 import { useLms } from '@/components/lms-provider';
-import { enrollInCourse, fetchCourseDetails } from '@/lib/lms-client';
+import { enrollInCourse, fetchCourseDetails, setPermanentSecretCode } from '@/lib/lms-client';
 import type {
   Course,
   CourseProgressSummary,
@@ -51,13 +51,16 @@ export default function CourseDetailsPage() {
       setCourse(data.course);
       setCurriculum(data.curriculum);
       setEnrollment(data.enrollment);
+      if (user && data.enrollment?.secretCode) {
+        setPermanentSecretCode(user.uid, courseId, data.enrollment.secretCode);
+      }
       setProgress(data.progress);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load course details.');
     } finally {
       setLoading(false);
     }
-  }, [courseId]);
+  }, [courseId, user]);
 
   useEffect(() => {
     void loadDetails();
@@ -93,6 +96,17 @@ export default function CourseDetailsPage() {
       setEnrolling(false);
     }
   };
+
+  const handleEnrollmentInitiated = useCallback(
+    (updatedEnrollment: Enrollment) => {
+      setEnrollment(updatedEnrollment);
+      if (user && updatedEnrollment.secretCode) {
+        setPermanentSecretCode(user.uid, courseId, updatedEnrollment.secretCode);
+      }
+      void refreshUserData();
+    },
+    [user, courseId, refreshUserData]
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
@@ -417,10 +431,7 @@ export default function CourseDetailsPage() {
           existingEnrollment={enrollment}
           isOpen={showPurchaseModal}
           onClose={() => setShowPurchaseModal(false)}
-          onEnrollmentInitiated={(updatedEnrollment) => {
-            setEnrollment(updatedEnrollment);
-            void refreshUserData();
-          }}
+          onEnrollmentInitiated={handleEnrollmentInitiated}
           onNotify={notify}
         />
       )}

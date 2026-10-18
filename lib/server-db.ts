@@ -457,10 +457,33 @@ const serverFirebaseApp = getApps().length > 0 ? getApp() : initializeApp(fireba
 const serverAuth = getAuth(serverFirebaseApp);
 const serverFirestore = getFirestore(serverFirebaseApp, firebaseConfig.firestoreDatabaseId);
 
+let firestoreQuotaExhaustedUntil = 0;
+
+export function isFirestoreQuotaExhausted(): boolean {
+  return Date.now() < firestoreQuotaExhaustedUntil;
+}
+
+export function markFirestoreQuotaExhausted(err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  const isQuota =
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Quota exceeded') ||
+    (typeof err === 'object' && err !== null && (err as { code?: string | number }).code === 8);
+  if (isQuota) {
+    firestoreQuotaExhaustedUntil = Date.now() + 60 * 60 * 1000; // Backoff for 1 hour
+    console.warn(
+      'Cloud Firestore daily write quota limit reached (Free tier). Using high-performance local JSON datastore.'
+    );
+  }
+}
+
 let isServerAuthenticated = false;
 let authPromise: Promise<boolean> | null = null;
 
 async function ensureServerAuth(): Promise<boolean> {
+  if (isFirestoreQuotaExhausted()) return false;
   if (isServerAuthenticated && serverAuth.currentUser) return true;
   if (authPromise) return authPromise;
 
@@ -479,13 +502,21 @@ async function ensureServerAuth(): Promise<boolean> {
   return authPromise;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 export async function syncFromFirestore(): Promise<DatabaseSchema | null> {
+  if (isFirestoreQuotaExhausted()) return null;
   try {
-    const authed = await ensureServerAuth();
+    const authed = await withTimeout(ensureServerAuth(), 2000, false);
     if (!authed) return null;
     const stateRef = doc(serverFirestore, 'app_state', 'database_snapshot');
-    const snap = await getDoc(stateRef);
-    if (snap.exists()) {
+    const snap = await withTimeout(getDoc(stateRef), 2000, null);
+    if (snap && snap.exists()) {
       const data = snap.data() as { schemaJson?: string };
       if (data.schemaJson) {
         const parsed = JSON.parse(data.schemaJson) as DatabaseSchema;
@@ -503,37 +534,44 @@ export async function syncFromFirestore(): Promise<DatabaseSchema | null> {
       }
     }
   } catch (err) {
-    console.warn('Failed to load database from Cloud Firestore:', err);
+    markFirestoreQuotaExhausted(err);
+    if (!isFirestoreQuotaExhausted()) {
+      console.warn('Failed to load database from Cloud Firestore:', err);
+    }
   }
   return null;
 }
 
 export async function syncToFirestore(db: DatabaseSchema): Promise<void> {
+  if (isFirestoreQuotaExhausted()) return;
   try {
-    const authed = await ensureServerAuth();
+    const authed = await withTimeout(ensureServerAuth(), 2000, false);
     if (!authed) return;
     const stateRef = doc(serverFirestore, 'app_state', 'database_snapshot');
-    await setDoc(stateRef, {
-      schemaJson: JSON.stringify(db),
-      updatedAt: new Date().toISOString(),
-      userCount: Object.keys(db.users).length,
-      courseCount: Object.keys(db.courses).length,
-      enrollmentCount: Object.keys(db.enrollments).length,
-      progressCount: Object.keys(db.lessonProgress).length,
-    });
+    await withTimeout(
+      setDoc(stateRef, {
+        schemaJson: JSON.stringify(db),
+        updatedAt: new Date().toISOString(),
+        userCount: Object.keys(db.users).length,
+        courseCount: Object.keys(db.courses).length,
+        enrollmentCount: Object.keys(db.enrollments).length,
+        progressCount: Object.keys(db.lessonProgress).length,
+      }),
+      2500,
+      undefined
+    );
   } catch (err) {
-    console.error('Failed to sync database to Cloud Firestore:', err);
+    markFirestoreQuotaExhausted(err);
+    if (!isFirestoreQuotaExhausted()) {
+      console.warn('Failed to sync database to Cloud Firestore:', err);
+    }
   }
 }
 
 export async function readDbAsync(): Promise<DatabaseSchema> {
   if (memoryCache) return memoryCache;
 
-  // 1. Primary: Load from Cloud Firestore (ensures persistent data across Vercel cold starts)
-  const fromCloud = await syncFromFirestore();
-  if (fromCloud) return fromCloud;
-
-  // 2. Secondary: Check local disk file
+  // 1. Instant check: local disk file
   try {
     if (fs.existsSync(DB_FILE)) {
       const raw = fs.readFileSync(DB_FILE, 'utf8');
@@ -541,7 +579,7 @@ export async function readDbAsync(): Promise<DatabaseSchema> {
       if (parsed && parsed.users && parsed.courses && parsed.lessons) {
         backfillEnrollments(parsed);
         memoryCache = parsed;
-        void syncToFirestore(parsed);
+        void syncFromFirestore();
         return parsed;
       }
     }
@@ -549,7 +587,11 @@ export async function readDbAsync(): Promise<DatabaseSchema> {
     console.warn('Local DB file read warning:', err);
   }
 
-  // 3. Tertiary: Seed initial data and write to Cloud Firestore
+  // 2. Primary fallback if disk empty: Load from Cloud Firestore
+  const fromCloud = await syncFromFirestore();
+  if (fromCloud) return fromCloud;
+
+  // 3. Seed initial data
   const initial = createInitialSeedDatabase();
   memoryCache = initial;
   try {
@@ -605,7 +647,6 @@ export function writeDb(db: DatabaseSchema): void {
   } catch (err) {
     console.error('Failed to persist LMS database file:', err);
   }
-  // Immediately persist snapshot to Cloud Firestore
   void syncToFirestore(db);
 }
 
@@ -621,7 +662,7 @@ export async function writeDbAsync(db: DatabaseSchema): Promise<void> {
   } catch (err) {
     console.error('Failed to persist LMS database file:', err);
   }
-  await syncToFirestore(db);
+  void syncToFirestore(db);
 }
 
 export function toPublicUserProfile(record: StoredUserRecord): UserProfile {
